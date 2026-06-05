@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KI-Workshop · Make-it Saar · pioneo & arconsis Saar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:     #f5f3ee;
+      --ink:    #1a1a18;
+      --ink2:   #555550;
+      --rule:   #dedad4;
+      --white:  #ffffff;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Nunito', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      position: relative;
+      padding: 72px 24px 56px;
+      text-align: center;
+      border-bottom: 2px solid var(--rule);
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        repeating-linear-gradient(0deg, transparent, transparent 39px, var(--rule) 39px, var(--rule) 40px),
+        repeating-linear-gradient(90deg, transparent, transparent 39px, var(--rule) 39px, var(--rule) 40px);
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    .badge {
+      display: inline-block;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border: 1.5px solid var(--ink);
+      padding: 5px 14px;
+      border-radius: 2px;
+      margin-bottom: 28px;
+      animation: fadeUp 0.5s ease both;
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 8vw, 80px);
+      font-weight: 900;
+      line-height: 1.0;
+      letter-spacing: -2px;
+      margin-bottom: 20px;
+      animation: fadeUp 0.5s 0.1s ease both;
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      position: relative;
+      display: inline-block;
+    }
+
+    .hero h1 em::after {
+      content: '';
+      position: absolute;
+      left: 0; right: 0; bottom: 4px;
+      height: 6px;
+      background: var(--ink);
+      z-index: -1;
+      transform: skewX(-8deg);
+    }
+
+    .hero-sub {
+      font-size: clamp(15px, 2.5vw, 19px);
+      color: var(--ink2);
+      font-weight: 600;
+      max-width: 540px;
+      margin: 0 auto 36px;
+      line-height: 1.6;
+      animation: fadeUp 0.5s 0.2s ease both;
+    }
+
+    .hero-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--ink);
+      color: var(--white);
+      font-family: 'Space Mono', monospace;
+      font-size: 13px;
+      padding: 14px 28px;
+      border-radius: 4px;
+      text-decoration: none;
+      letter-spacing: 1px;
+      transition: transform 0.15s, background 0.15s;
+      animation: fadeUp 0.5s 0.3s ease both;
+    }
+
+    .hero-cta:hover { transform: translateY(-2px); background: #333; }
+    .hero-cta .arrow { font-size: 16px; }
+
+    .logos {
+      margin-top: 48px;
+      font-family: 'Space Mono', monospace;
+      font-size: 12px;
+      color: var(--ink2);
+      letter-spacing: 1px;
+      animation: fadeUp 0.5s 0.4s ease both;
+    }
+
+    /* ── INTRO ── */
+    .intro {
+      max-width: 720px;
+      margin: 72px auto 0;
+      padding: 0 24px;
+      text-align: center;
+    }
+
+    .intro h2 {
+      font-size: clamp(22px, 4vw, 32px);
+      font-weight: 800;
+      margin-bottom: 16px;
+    }
+
+    .intro p {
+      font-size: 17px;
+      color: var(--ink2);
+      line-height: 1.75;
+      margin-bottom: 12px;
+    }
+
+    .step-row {
+      display: flex;
+      gap: 0;
+      margin: 48px 0 0;
+      border: 1.5px solid var(--rule);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .step {
+      flex: 1;
+      padding: 28px 20px;
+      border-right: 1.5px solid var(--rule);
+      text-align: center;
+    }
+
+    .step:last-child { border-right: none; }
+
+    .step-num {
+      font-family: 'Space Mono', monospace;
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      display: block;
+    }
+
+    .step h3 { font-size: 15px; font-weight: 800; margin-bottom: 6px; }
+    .step p  { font-size: 13px; color: var(--ink2); line-height: 1.5; }
+
+    @media (max-width: 600px) {
+      .step-row { flex-direction: column; }
+      .step { border-right: none; border-bottom: 1.5px solid var(--rule); }
+      .step:last-child { border-bottom: none; }
+    }
+
+    /* ── PROJECTS ── */
+    .projects {
+      max-width: 960px;
+      margin: 80px auto 0;
+      padding: 0 24px;
+    }
+
+    .section-label {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--ink2);
+      border-left: 3px solid var(--ink);
+      padding-left: 12px;
+      margin-bottom: 36px;
+    }
+
+    .project-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      border: 1.5px solid var(--rule);
+      border-radius: 8px;
+      padding: 28px 24px;
+      background: var(--white);
+      transition: transform 0.2s, box-shadow 0.2s;
+      cursor: default;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.08);
+    }
+
+    .card-icon  { font-size: 36px; margin-bottom: 12px; display: block; }
+    .card-age   { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 1px; color: var(--ink2); text-transform: uppercase; margin-bottom: 8px; }
+    .card-title { font-size: 19px; font-weight: 800; margin-bottom: 10px; }
+    .card-desc  { font-size: 14px; color: var(--ink2); line-height: 1.6; margin-bottom: 20px; }
+
+    .card-divider { height: 1px; background: var(--rule); margin-bottom: 16px; }
+
+    .prompt-label { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink2); margin-bottom: 8px; }
+
+    .prompt-box {
+      background: var(--bg);
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      padding: 12px 14px;
+      font-size: 13px;
+      color: var(--ink);
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+
+    .copy-btn {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      margin-bottom: 24px;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 1px;
+      background: var(--ink);
+      color: var(--white);
+      border: none;
+      padding: 8px 14px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.15s;
+      text-align: center;
+    }
+
+    .copy-btn:hover { background: #333; }
+    .copy-btn.copied { background: #2e7d32; }
+
+    .tweaks-label { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink2); margin-bottom: 8px; }
+
+    .tweaks { display: flex; flex-direction: column; gap: 6px; }
+
+    .tweak {
+      font-size: 13px;
+      color: var(--ink2);
+      font-style: italic;
+      padding-left: 14px;
+      position: relative;
+    }
+
+    .tweak::before { content: '→'; position: absolute; left: 0; color: var(--ink); font-style: normal; font-size: 11px; }
+
+    /* ── COLORS per card ── */
+    .card[data-color="blue"]   { border-top: 4px solid #1E6FA8; }
+    .card[data-color="green"]  { border-top: 4px solid #1E6B22; }
+    .card[data-color="purple"] { border-top: 4px solid #5E1A8A; }
+    .card[data-color="orange"] { border-top: 4px solid #C96A00; }
+    .card[data-color="teal"]   { border-top: 4px solid #00695C; }
+    .card[data-color="red"]    { border-top: 4px solid #B71C1C; }
+
+    /* ── CLAUDE CTA ── */
+    .cta-section {
+      max-width: 720px;
+      margin: 80px auto 0;
+      padding: 0 24px;
+      text-align: center;
+    }
+
+    .cta-box {
+      background: var(--ink);
+      color: var(--white);
+      border-radius: 12px;
+      padding: 52px 40px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-box::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        repeating-linear-gradient(0deg, transparent, transparent 29px, rgba(255,255,255,0.04) 29px, rgba(255,255,255,0.04) 30px),
+        repeating-linear-gradient(90deg, transparent, transparent 29px, rgba(255,255,255,0.04) 29px, rgba(255,255,255,0.04) 30px);
+      pointer-events: none;
+    }
+
+    .cta-box h2 { font-size: clamp(22px, 4vw, 30px); font-weight: 900; margin-bottom: 14px; }
+    .cta-box p  { font-size: 16px; color: rgba(255,255,255,0.7); margin-bottom: 32px; line-height: 1.7; }
+
+    .cta-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--white);
+      color: var(--ink);
+      font-family: 'Space Mono', monospace;
+      font-size: 13px;
+      padding: 14px 28px;
+      border-radius: 4px;
+      text-decoration: none;
+      letter-spacing: 1px;
+      font-weight: 700;
+      transition: transform 0.15s;
+    }
+
+    .cta-link:hover { transform: translateY(-2px); }
+
+    /* ── FOOTER ── */
+    footer {
+      margin-top: 80px;
+      border-top: 1.5px solid var(--rule);
+      padding: 32px 24px;
+      text-align: center;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: var(--ink2);
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="badge">Make-it Saar · KI-Workshop</div>
+  <h1>KI baut<br><em>dein Spiel</em></h1>
+  <p class="hero-sub">Du sagst dem Computer, was du willst — er baut es in Minuten. Probiere es selbst zuhause!</p>
+  <a href="https://claude.ai" target="_blank" class="hero-cta">
+    Jetzt ausprobieren auf claude.ai <span class="arrow">↗</span>
+  </a>
+
+</header>
+
+<!-- INTRO -->
+<section class="intro">
+  <h2>So funktioniert's</h2>
+  <p>Claude Code ist ein KI-Agent, der auf natürliche Sprache reagiert und echten Code schreibt. Du beschreibst, was du willst — er baut es.</p>
+
+  <div class="step-row">
+    <div class="step">
+      <span class="step-num">01</span>
+      <h3>Prompt eingeben</h3>
+      <p>Beschreibe dein Spiel in eigenen Worten — so wie du es dir vorstellst.</p>
+    </div>
+    <div class="step">
+      <span class="step-num">02</span>
+      <h3>KI baut es</h3>
+      <p>Claude Code schreibt den kompletten Code — in Sekunden, live vor deinen Augen.</p>
+    </div>
+    <div class="step">
+      <span class="step-num">03</span>
+      <h3>Spielen &amp; anpassen</h3>
+      <p>Sofort spielbar im Browser. Sag der KI, was du noch ändern möchtest!</p>
+    </div>
+  </div>
+</section>
+
+<!-- PROJECTS -->
+<section class="projects">
+  <div class="section-label">Die 6 Workshop-Projekte</div>
+  <div class="project-grid" id="grid"></div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="cta-box">
+    <h2>Zuhause weitermachen 🚀</h2>
+    <p>Alle Prompts funktionieren auch zuhause — einfach auf claude.ai einen kostenlosen Account anlegen und loslegen. Lass deiner Kreativität freien Lauf!</p>
+    <a href="https://claude.ai" target="_blank" class="cta-link">claude.ai öffnen ↗</a>
+  </div>
+</section>
+
+<footer>
+  Make-it Saar · KI-Workshop · mit freundlicher Unterstützung von pioneo &amp; arconsis Saar
+</footer>
+
+<script>
+var PROJECTS = [
+  {
+    icon: "&#x1F98B;", color: "blue", age: "8–10 Jahre",
+    title: "Schmetterling fangen",
+    desc: "Ein bunter Schmetterling fliegt zufällig über den Bildschirm. Fang ihn mit der Maus!",
+    prompt: "Erstelle ein einfaches Browser-Spiel in einer einzigen HTML-Datei. Ein bunter Schmetterling fliegt zufällig über den Bildschirm. Der Spieler muss den Schmetterling mit der Maus anklicken. Jeder Treffer gibt einen Punkt. Nach 10 Treffern erscheint eine Gewinn-Nachricht. Mach den Schmetterling bunt und das Spiel mit bunten Farben und einer netten Schrift.",
+    tweaks: ['"Mach den Schmetterling schneller"', '"Füge einen Countdown-Timer hinzu"', '"Ändere den Schmetterling zu einem Herz"']
+  },
+  {
+    icon: "&#x1F522;", color: "green", age: "8–10 Jahre",
+    title: "Zahlen raten",
+    desc: "Der Computer denkt sich eine Zahl zwischen 1 und 100. Finde sie mit so wenig Versuchen wie möglich!",
+    prompt: "Erstelle ein Browser-Ratespiel in einer HTML-Datei. Der Computer denkt sich eine zufällige Zahl zwischen 1 und 100. Der Spieler gibt eine Zahl ein und drückt auf Raten. Das Spiel sagt zu groß oder zu klein. Bei richtigem Ergebnis: Konfetti-Animation und Anzeige der Anzahl Versuche. Schönes Design mit bunten Farben.",
+    tweaks: ['"Mach die Zahl bis 1000"', '"Gib nur noch 5 Versuche"', '"Füge eine Highscore-Liste hinzu"']
+  },
+  {
+    icon: "&#x1F382;", color: "purple", age: "8–11 Jahre",
+    title: "Geburtstagskarte",
+    desc: "Eine animierte Geburtstagskarte mit deinem Namen, Konfetti und Emojis — zum Verschicken!",
+    prompt: "Erstelle eine animierte Geburtstagskarte als HTML-Datei. Die Karte zeigt meinen Namen in großen, bunten Buchstaben. Es gibt eine Konfetti-Animation. Die Karte spielt beim Öffnen eine kleine Animation ab. Unten steht Herzlichen Glückwunsch in einer schönen Schrift. Nutze viele Farben und Emojis. Mein Name ist: [DEIN NAME]",
+    tweaks: ['"Füge einen Wunsch-Text hinzu"', '"Ändere die Farben zu meiner Lieblingsfarbe"', '"Mach die Karte im Minecraft-Stil"']
+  },
+  {
+    icon: "&#x1F40D;", color: "orange", age: "11–14 Jahre",
+    title: "Snake",
+    desc: "Das klassische Snake-Spiel — steuere die Schlange, fress Äpfel, werde länger. Nicht in dich selbst beißen!",
+    prompt: "Erstelle das klassische Snake-Spiel als einzelne HTML-Datei mit JavaScript. Die Schlange bewegt sich mit den Pfeiltasten. Äpfel erscheinen zufällig. Die Schlange wächst beim Essen. Bei Wandkollision oder Selbstkollision ist das Spiel vorbei. Zeige den Punktestand. Starte mit einem Spiel starten Button. Schönes dunkles Design.",
+    tweaks: ['"Mach die Schlange rot"', '"Füge einen Highscore hinzu"', '"Lass die Schlange beim Wanddurchgang weiterlaufen"']
+  },
+  {
+    icon: "&#x1F3D3;", color: "teal", age: "11–14 Jahre",
+    title: "Pong",
+    desc: "Das älteste Computerspiel der Welt — zwei Spieler, ein Ball, wer zuerst 5 Punkte hat gewinnt!",
+    prompt: "Erstelle ein Pong-Spiel als einzelne HTML-Datei. Spieler 1 steuert mit W/S, Spieler 2 mit Pfeiltasten. Der Ball prallt von Wänden und Schlägern ab. Bei Fehler: Punkt für den Gegner. Spiel geht bis 5 Punkte. Schönes dunkles Design mit Leuchteffekt am Ball.",
+    tweaks: ['"Mach den Ball schneller nach jedem Treffer"', '"Füge einen Computer-Gegner hinzu"', '"Ändere die Farben komplett"']
+  },
+  {
+    icon: "&#x1F916;", color: "red", age: "11–14 Jahre",
+    title: "Quiz-Bot",
+    desc: "Ein Quiz zu deinem Lieblingsthema — mit 5 Fragen, Antwortoptionen und Auswertung am Ende.",
+    prompt: "Erstelle eine Quiz-App als HTML-Datei. Das Quiz hat 5 Fragen zu meinem Lieblingsthema: Fußball. Jede Frage hat 4 Antwortmöglichkeiten (A, B, C, D). Nach jeder Antwort: sofortiges Feedback (richtig/falsch und Erklärung). Am Ende: Gesamtpunktzahl mit Bewertung. Schönes modernes Design.",
+    tweaks: ['"Ändere das Thema zu Minecraft"', '"Füge 10 Fragen hinzu"', '"Zeige nach dem Quiz alle Fehler mit Erklärung"']
+  }
+];
+
+function copyText(text, btn) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch(e) {}
+  document.body.removeChild(ta);
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(function(){});
+  }
+  btn.textContent = '✓ Kopiert!';
+  btn.classList.add('copied');
+  setTimeout(function() {
+    btn.textContent = 'Prompt kopieren';
+    btn.classList.remove('copied');
+  }, 2000);
+}
+
+var grid = document.getElementById('grid');
+PROJECTS.forEach(function(p, idx) {
+  var card = document.createElement('div');
+  card.className = 'card';
+  card.dataset.color = p.color;
+
+  var icon  = document.createElement('span');
+  icon.className = 'card-icon';
+  icon.innerHTML = p.icon;
+
+  var age   = document.createElement('div');
+  age.className = 'card-age';
+  age.textContent = p.age;
+
+  var title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = p.title;
+
+  var desc  = document.createElement('div');
+  desc.className = 'card-desc';
+  desc.textContent = p.desc;
+
+  var div1  = document.createElement('div');
+  div1.className = 'card-divider';
+
+  var plbl  = document.createElement('div');
+  plbl.className = 'prompt-label';
+  plbl.textContent = 'Prompt für claude.ai';
+
+  var pbox  = document.createElement('div');
+  pbox.className = 'prompt-box';
+  pbox.textContent = p.prompt;
+
+  var btn   = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.textContent = 'Prompt kopieren';
+  btn.addEventListener('click', function() { copyText(p.prompt, btn); });
+
+  var tlbl  = document.createElement('div');
+  tlbl.className = 'tweaks-label';
+  tlbl.textContent = 'Danach kannst du sagen';
+
+  var tweaksDiv = document.createElement('div');
+  tweaksDiv.className = 'tweaks';
+  p.tweaks.forEach(function(t) {
+    var tw = document.createElement('div');
+    tw.className = 'tweak';
+    tw.textContent = t;
+    tweaksDiv.appendChild(tw);
+  });
+
+  [icon, age, title, desc, div1, plbl, pbox, btn, tlbl, tweaksDiv].forEach(function(el) {
+    card.appendChild(el);
+  });
+  grid.appendChild(card);
+});
+</script>
+</body>
+</html>
