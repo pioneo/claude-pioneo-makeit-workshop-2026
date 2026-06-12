@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>⚽ Fußball-Quiz</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 24px;
+      padding: 40px;
+      max-width: 640px;
+      width: 100%;
+      color: #fff;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.4);
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .header .ball { font-size: 3rem; animation: bounce 1.5s infinite; display: inline-block; }
+    @keyframes bounce {
+      0%,100% { transform: translateY(0); }
+      50%      { transform: translateY(-10px); }
+    }
+    .header h1 {
+      font-size: 1.9rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-top: 8px;
+    }
+    .header p {
+      color: rgba(255,255,255,0.55);
+      font-size: 0.95rem;
+      margin-top: 4px;
+    }
+
+    /* ── Progress ── */
+    .progress-bar-wrap {
+      background: rgba(255,255,255,0.1);
+      border-radius: 99px;
+      height: 6px;
+      margin-bottom: 28px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00d2ff, #7b2ff7);
+      border-radius: 99px;
+      transition: width 0.5s ease;
+    }
+    .progress-label {
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.45);
+      text-align: right;
+      margin-top: 6px;
+      margin-bottom: 20px;
+    }
+
+    /* ── Question ── */
+    .question-text {
+      font-size: 1.2rem;
+      font-weight: 700;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+
+    /* ── Answers ── */
+    .answers { display: flex; flex-direction: column; gap: 12px; }
+
+    .answer-btn {
+      background: rgba(255,255,255,0.07);
+      border: 1.5px solid rgba(255,255,255,0.15);
+      border-radius: 14px;
+      padding: 14px 18px;
+      color: #fff;
+      font-size: 0.95rem;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .answer-btn:hover:not(:disabled) {
+      background: rgba(255,255,255,0.14);
+      border-color: rgba(255,255,255,0.3);
+      transform: translateX(4px);
+    }
+    .answer-btn .letter {
+      background: rgba(255,255,255,0.12);
+      border-radius: 8px;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    .answer-btn.correct {
+      background: rgba(34,197,94,0.2);
+      border-color: #22c55e;
+    }
+    .answer-btn.correct .letter { background: #22c55e; }
+    .answer-btn.wrong {
+      background: rgba(239,68,68,0.2);
+      border-color: #ef4444;
+    }
+    .answer-btn.wrong .letter { background: #ef4444; }
+    .answer-btn:disabled { cursor: default; }
+
+    /* ── Feedback ── */
+    .feedback {
+      margin-top: 20px;
+      padding: 16px 18px;
+      border-radius: 14px;
+      font-size: 0.92rem;
+      line-height: 1.55;
+      display: none;
+    }
+    .feedback.correct {
+      background: rgba(34,197,94,0.15);
+      border: 1px solid rgba(34,197,94,0.4);
+      color: #86efac;
+    }
+    .feedback.wrong {
+      background: rgba(239,68,68,0.12);
+      border: 1px solid rgba(239,68,68,0.35);
+      color: #fca5a5;
+    }
+    .feedback strong { display: block; margin-bottom: 4px; font-size: 1rem; }
+
+    /* ── Next button ── */
+    .next-btn {
+      margin-top: 20px;
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(90deg, #00d2ff, #7b2ff7);
+      border: none;
+      border-radius: 14px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: none;
+      transition: opacity 0.2s, transform 0.15s;
+    }
+    .next-btn:hover { opacity: 0.88; transform: scale(1.01); }
+
+    /* ── Result screen ── */
+    #result { display: none; text-align: center; }
+    .score-circle {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #00d2ff, #7b2ff7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      margin: 0 auto 24px;
+      font-size: 2.4rem;
+      font-weight: 900;
+      box-shadow: 0 0 40px rgba(123,47,247,0.5);
+    }
+    .score-circle small { font-size: 0.85rem; font-weight: 400; opacity: 0.7; }
+    .rating {
+      font-size: 1.5rem;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    .rating-desc {
+      color: rgba(255,255,255,0.55);
+      font-size: 0.95rem;
+      margin-bottom: 28px;
+    }
+    .result-details {
+      background: rgba(255,255,255,0.05);
+      border-radius: 14px;
+      padding: 16px;
+      text-align: left;
+      font-size: 0.88rem;
+      color: rgba(255,255,255,0.65);
+      margin-bottom: 24px;
+    }
+    .result-details p { margin-bottom: 6px; }
+    .result-details .tick { color: #22c55e; }
+    .result-details .cross { color: #ef4444; }
+    .restart-btn {
+      padding: 14px 36px;
+      background: linear-gradient(90deg, #00d2ff, #7b2ff7);
+      border: none;
+      border-radius: 14px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .restart-btn:hover { opacity: 0.85; }
+  </style>
+</head>
+<body>
+<div class="card">
+
+  <!-- Quiz screen -->
+  <div id="quiz">
+    <div class="header">
+      <div class="ball">⚽</div>
+      <h1>Fußball-Quiz</h1>
+      <p>5 Fragen · Teste dein Fußball-Wissen!</p>
+    </div>
+
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+    </div>
+    <div class="progress-label" id="progressLabel">Frage 1 von 5</div>
+
+    <div class="question-text" id="questionText"></div>
+
+    <div class="answers" id="answersContainer"></div>
+
+    <div class="feedback" id="feedback"></div>
+
+    <button class="next-btn" id="nextBtn" onclick="nextQuestion()">Nächste Frage →</button>
+  </div>
+
+  <!-- Result screen -->
+  <div id="result">
+    <div class="header">
+      <div class="ball">🏆</div>
+      <h1>Quiz beendet!</h1>
+    </div>
+    <div class="score-circle" id="scoreCircle">
+      <span id="scoreText">0/5</span>
+      <small>Punkte</small>
+    </div>
+    <div class="rating" id="ratingTitle"></div>
+    <div class="rating-desc" id="ratingDesc"></div>
+    <div class="result-details" id="resultDetails"></div>
+    <button class="restart-btn" onclick="restart()">🔄 Nochmal spielen</button>
+  </div>
+
+</div>
+
+<script>
+const questions = [
+  {
+    q: "Welche Nationalmannschaft gewann die FIFA Weltmeisterschaft 2014 in Brasilien?",
+    options: ["Argentinien", "Brasilien", "Frankreich", "Deutschland"],
+    correct: 3,
+    explanation: "Deutschland besiegte Argentinien im Finale mit 1:0 durch Mario Götzes Treffer in der Verlängerung – das legendäre 7:1 gegen Brasilien im Halbfinale bleibt unvergessen."
+  },
+  {
+    q: "Wer hält den Rekord für die meisten Tore in einer einzigen Bundesliga-Saison (49 Tore, 2021/22)?",
+    options: ["Erling Haaland", "Robert Lewandowski", "Gerd Müller", "Thomas Müller"],
+    correct: 1,
+    explanation: "Robert Lewandowski erzielte in der Saison 2021/22 sensationelle 41 Tore und übertraf damit Gerd Müllers 40 Jahre alten Rekord von 40 Toren. Er erreichte sogar 49 Tore in der gesamten Saison."
+  },
+  {
+    q: "In welchem Jahr wurde der FC Bayern München gegründet?",
+    options: ["1900", "1898", "1902", "1895"],
+    correct: 0,
+    explanation: "Der FC Bayern München wurde am 27. Februar 1900 gegründet – und ist damit einer der traditionsreichsten Vereine Deutschlands und Europas."
+  },
+  {
+    q: "Welcher Spieler gewann bislang die meisten Ballon d'Or Auszeichnungen?",
+    options: ["Cristiano Ronaldo", "Zinedine Zidane", "Lionel Messi", "Ronaldo Nazário"],
+    correct: 2,
+    explanation: "Lionel Messi hat bisher 8 Ballon d'Or gewonnen (Stand 2023) – mehr als jeder andere Spieler in der Geschichte dieses prestigeträchtigen Awards."
+  },
+  {
+    q: "Wie viele Spieler umfasst eine reguläre Fußballmannschaft auf dem Feld (ohne Auswechselspieler)?",
+    options: ["9", "10", "12", "11"],
+    correct: 3,
+    explanation: "Eine Fußballmannschaft besteht aus 11 Spielern auf dem Feld, darunter ein Torwart und zehn Feldspieler. Dies ist eine der Grundregeln des Fußballs, die seit 1863 festgelegt ist."
+  }
+];
+
+let current = 0;
+let score = 0;
+let results = [];
+
+function loadQuestion() {
+  const q = questions[current];
+  const letters = ['A','B','C','D'];
+  const pct = (current / questions.length) * 100;
+
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLabel').textContent = `Frage ${current + 1} von ${questions.length}`;
+  document.getElementById('questionText').textContent = q.q;
+
+  const container = document.getElementById('answersContainer');
+  container.innerHTML = '';
+  q.options.forEach((opt, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'answer-btn';
+    btn.innerHTML = `<span class="letter">${letters[i]}</span><span>${opt}</span>`;
+    btn.onclick = () => selectAnswer(i);
+    container.appendChild(btn);
+  });
+
+  document.getElementById('feedback').style.display = 'none';
+  document.getElementById('feedback').className = 'feedback';
+  document.getElementById('nextBtn').style.display = 'none';
+}
+
+function selectAnswer(idx) {
+  const q = questions[current];
+  const buttons = document.querySelectorAll('.answer-btn');
+  buttons.forEach(b => b.disabled = true);
+
+  const isCorrect = idx === q.correct;
+  buttons[idx].classList.add(isCorrect ? 'correct' : 'wrong');
+  if (!isCorrect) buttons[q.correct].classList.add('correct');
+
+  if (isCorrect) score++;
+  results.push({ q: q.q, chosen: q.options[idx], correct: q.options[q.correct], isCorrect });
+
+  const fb = document.getElementById('feedback');
+  fb.className = 'feedback ' + (isCorrect ? 'correct' : 'wrong');
+  fb.innerHTML = `<strong>${isCorrect ? '✅ Richtig!' : '❌ Falsch!'}</strong>${q.explanation}`;
+  fb.style.display = 'block';
+
+  const nextBtn = document.getElementById('nextBtn');
+  nextBtn.style.display = 'block';
+  nextBtn.textContent = current < questions.length - 1 ? 'Nächste Frage →' : 'Ergebnis anzeigen 🏆';
+}
+
+function nextQuestion() {
+  current++;
+  if (current < questions.length) {
+    loadQuestion();
+  } else {
+    showResult();
+  }
+}
+
+function showResult() {
+  document.getElementById('quiz').style.display = 'none';
+  document.getElementById('result').style.display = 'block';
+
+  document.getElementById('scoreText').textContent = `${score}/5`;
+
+  let rating, desc;
+  if (score === 5)      { rating = '🏆 Weltklasse!';          desc = 'Perfekte Punktzahl – du bist ein echtes Fußball-Genie!'; }
+  else if (score === 4) { rating = '⭐ Profi-Niveau';          desc = 'Fast perfekt! Du kennst dich wirklich sehr gut aus.'; }
+  else if (score === 3) { rating = '👍 Solide Leistung';       desc = 'Gutes Ergebnis! Mit etwas mehr Training bist du bald Profi.'; }
+  else if (score === 2) { rating = '📚 Noch Luft nach oben';   desc = 'Du kennst die Basics – aber da geht noch mehr!'; }
+  else                  { rating = '🌱 Anfänger am Ball';       desc = 'Nicht aufgeben – beim nächsten Mal wird\'s besser!'; }
+
+  document.getElementById('ratingTitle').textContent = rating;
+  document.getElementById('ratingDesc').textContent = desc;
+
+  let html = '';
+  results.forEach((r, i) => {
+    const icon = r.isCorrect ? '<span class="tick">✔</span>' : '<span class="cross">✘</span>';
+    html += `<p>${icon} <strong>Frage ${i+1}:</strong> ${r.isCorrect ? 'Richtig' : `Falsch (Richtig: ${r.correct})`}</p>`;
+  });
+  document.getElementById('resultDetails').innerHTML = html;
+}
+
+function restart() {
+  current = 0; score = 0; results = [];
+  document.getElementById('quiz').style.display = 'block';
+  document.getElementById('result').style.display = 'none';
+  loadQuestion();
+}
+
+loadQuestion();
+</script>
+</body>
+</html>
