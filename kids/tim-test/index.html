@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TIPPDUELL</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d0d14;
+    color: #e0e0f0;
+    font-family: 'Courier New', monospace;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    border-bottom: 1px solid #1e1e30;
+    flex-shrink: 0;
+    font-size: .9rem;
+    letter-spacing: 2px;
+    color: #556;
+  }
+  #topbar .val { color: #e0e0f0; font-size: 1.1rem; }
+  #lives { font-size: 1.2rem; letter-spacing: 4px; }
+
+  #arena {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .word {
+    position: absolute;
+    font-size: 1.15rem;
+    letter-spacing: 1px;
+    white-space: nowrap;
+    transition: none;
+    user-select: none;
+  }
+  .word .done   { color: #4df; text-shadow: 0 0 8px #2af; }
+  .word .rest   { color: #556; }
+  .word.active  .rest { color: #dde; }
+  .word.active  { filter: drop-shadow(0 0 6px #4df8); }
+
+  #inputbar {
+    padding: 10px 20px 14px;
+    border-top: 1px solid #1e1e30;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  #inputbar label { color: #334; font-size: .85rem; letter-spacing: 2px; }
+  #inputfield {
+    flex: 1;
+    background: #12121e;
+    border: 1px solid #2a2a40;
+    border-radius: 4px;
+    color: #e0e0f0;
+    font-family: 'Courier New', monospace;
+    font-size: 1.1rem;
+    padding: 6px 12px;
+    outline: none;
+    caret-color: #4df;
+  }
+  #inputfield:focus { border-color: #4df; box-shadow: 0 0 0 2px rgba(68,221,255,0.1); }
+  #wpm-display { color: #334; font-size: .8rem; letter-spacing: 1px; min-width: 70px; text-align: right; }
+  #wpm-display span { color: #4df; }
+
+  /* overlay */
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(5,5,15,0.93);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    z-index: 20;
+  }
+  #overlay h1 {
+    font-size: 3rem;
+    letter-spacing: 10px;
+    color: #4df;
+    text-shadow: 0 0 30px #2af;
+  }
+  #overlay .tagline { color: #445; font-size: .9rem; letter-spacing: 2px; }
+  #overlay .stats   { color: #778; font-size: 1rem; letter-spacing: 1px; line-height: 1.9; text-align: center; }
+  #overlay .stats b { color: #dde; }
+  #overlay button {
+    background: none;
+    border: 1px solid #4df;
+    color: #4df;
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    letter-spacing: 4px;
+    padding: .55rem 2.2rem;
+    cursor: pointer;
+    margin-top: .5rem;
+    text-transform: uppercase;
+    transition: all .12s;
+  }
+  #overlay button:hover { background: #4df; color: #000; }
+
+  /* miss flash */
+  @keyframes flash-red {
+    0%   { background: rgba(255,50,50,0.15); }
+    100% { background: transparent; }
+  }
+  .flash { animation: flash-red .3s ease; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div>PUNKTE &nbsp;<span class="val" id="score">0</span></div>
+  <div>LEVEL &nbsp;<span class="val" id="level">1</span></div>
+  <div id="lives">♥ ♥ ♥</div>
+  <div>WPM &nbsp;<span class="val" id="wpm">—</span></div>
+</div>
+
+<div id="arena"></div>
+
+<div id="inputbar">
+  <label>TIPPE&nbsp;›</label>
+  <input id="inputfield" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Warte auf Start…" disabled>
+  <div id="wpm-display">ø <span id="wpm2">—</span> WPM</div>
+</div>
+
+<div id="overlay">
+  <h1>TIPPDUELL</h1>
+  <div class="tagline">Tippe die Wörter bevor sie unten ankommen</div>
+  <div class="stats" id="overlay-stats"></div>
+  <button id="startBtn">START</button>
+</div>
+
+<script>
+// ── Wortlisten ─────────────────────────────────────────────────────────────
+const WOERTER = [
+  // kurz (3–4)
+  'Haus','Baum','Zeit','Licht','Zug','Ball','Sand','Mond','Meer','Burg',
+  'Hund','Katze','Fisch','Buch','Stein','Wind','Glas','Brot','Feld','Bach',
+  // mittel (5–7)
+  'Sommer','Wolke','Feuer','Brücke','Schule','Straße','Blumen','Finger','Hammer','Turm',
+  'Fenster','Kissen','Kaffee','Pferde','Lösung','Gesicht','Schrank','Frühling','Donner','Leiter',
+  'Wasser','Garten','Bienen','Abend','Morgen','Flugzeug','Stiefel','Messer','Gitarre','Tempel',
+  // lang (8+)
+  'Schmetterling','Abenteuer','Spaziergang','Geschwindigkeit','Blumenwiese',
+  'Sonnenschein','Regenwald','Berggipfel','Mondschein','Wasserfall',
+  'Kühlschrank','Butterblume','Schlüsselloch','Jahreszeit','Fernseher',
+  'Fahrradweg','Donnerwetter','Zauberstab','Tischtennis','Grundschule',
+];
+
+// ── Hilfsfunktionen ────────────────────────────────────────────────────────
+const rnd    = (a, b) => a + Math.random() * (b - a);
+const rndInt = (a, b) => Math.floor(rnd(a, b + 1));
+const pick   = arr => arr[Math.floor(Math.random() * arr.length)];
+
+// ── Spielzustand ───────────────────────────────────────────────────────────
+let words, score, lives, level, activeWord, gameRunning;
+let wordsTyped, charsTyped, startTime, lastSpawn, spawnInterval, fallSpeed;
+let rafId;
+
+const arena    = document.getElementById('arena');
+const input    = document.getElementById('inputfield');
+const scoreEl  = document.getElementById('score');
+const levelEl  = document.getElementById('level');
+const livesEl  = document.getElementById('lives');
+const wpmEl    = document.getElementById('wpm');
+const wpm2El   = document.getElementById('wpm2');
+const overlay  = document.getElementById('overlay');
+
+// ── Start ──────────────────────────────────────────────────────────────────
+function startGame() {
+  words = []; score = 0; lives = 3; level = 1;
+  activeWord = null; wordsTyped = 0; charsTyped = 0;
+  startTime = performance.now(); lastSpawn = 0;
+  spawnInterval = 2800; fallSpeed = 0.28;
+
+  arena.innerHTML = '';
+  overlay.style.display = 'none';
+  input.disabled = false;
+  input.value = '';
+  input.focus();
+  gameRunning = true;
+
+  updateHUD();
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(loop);
+}
+
+// ── Wort spawnen ───────────────────────────────────────────────────────────
+function spawnWord() {
+  const text  = pick(WOERTER);
+  const el    = document.createElement('div');
+  el.className = 'word';
+  renderWord(el, text, 0);
+
+  const arenaW = arena.offsetWidth;
+  const margin = 10;
+  // estimate char width ~11px
+  const maxX = Math.max(margin, arenaW - text.length * 11 - margin);
+  el.style.left = rndInt(margin, maxX) + 'px';
+  el.style.top  = '-30px';
+  arena.appendChild(el);
+
+  words.push({ text, typed: 0, el, y: -30, speed: fallSpeed * (0.85 + Math.random() * 0.3) });
+  lastSpawn = performance.now();
+}
+
+function renderWord(el, text, typed) {
+  const done = `<span class="done">${text.slice(0, typed)}</span>`;
+  const rest = `<span class="rest">${text.slice(typed)}</span>`;
+  el.innerHTML = done + rest;
+}
+
+// ── Eingabe ────────────────────────────────────────────────────────────────
+input.addEventListener('input', () => {
+  if (!gameRunning) return;
+  const val = input.value;
+  if (!val) { clearActive(); return; }
+
+  // Wenn kein aktives Wort: finde Treffer nach erstem Buchstaben
+  if (!activeWord) {
+    const match = words.find(w => w.text.toLowerCase().startsWith(val.toLowerCase()));
+    if (match) { activeWord = match; match.el.classList.add('active'); }
+    else { return; }
+  }
+
+  const w = activeWord;
+  const target = w.text.slice(0, val.length);
+
+  if (w.text.toLowerCase().startsWith(val.toLowerCase())) {
+    w.typed = val.length;
+    renderWord(w.el, w.text, w.typed);
+
+    if (w.typed >= w.text.length) {
+      // Fertig!
+      const bonus = Math.max(1, Math.floor((arena.offsetHeight - w.y) / arena.offsetHeight * 3));
+      score += w.text.length * 10 * bonus;
+      charsTyped += w.text.length;
+      wordsTyped++;
+      boom(w);
+      removeWord(w);
+      activeWord = null;
+      input.value = '';
+      updateHUD();
+      updateWPM();
+      checkLevel();
+    }
+  } else {
+    // Falsch getippt — kleiner Shake
+    input.style.borderColor = '#f44';
+    setTimeout(() => input.style.borderColor = '', 200);
+  }
+});
+
+function clearActive() {
+  if (activeWord) {
+    activeWord.el.classList.remove('active');
+    activeWord.typed = 0;
+    renderWord(activeWord.el, activeWord.text, 0);
+    activeWord = null;
+  }
+}
+
+function removeWord(w) {
+  w.el.remove();
+  words = words.filter(x => x !== w);
+}
+
+// ── Boom-Effekt ────────────────────────────────────────────────────────────
+function boom(w) {
+  const rect = w.el.getBoundingClientRect();
+  const arenaRect = arena.getBoundingClientRect();
+  const cx = rect.left - arenaRect.left + rect.width / 2;
+  const cy = rect.top  - arenaRect.top  + rect.height / 2;
+
+  for (let i = 0; i < 12; i++) {
+    const dot = document.createElement('div');
+    const angle = (i / 12) * Math.PI * 2;
+    const dist  = 20 + Math.random() * 30;
+    dot.style.cssText = `
+      position:absolute;
+      left:${cx}px; top:${cy}px;
+      width:3px; height:3px;
+      border-radius:50%;
+      background:#4df;
+      box-shadow:0 0 4px #2af;
+      pointer-events:none;
+      transition: transform .4s ease-out, opacity .4s ease-out;
+    `;
+    arena.appendChild(dot);
+    requestAnimationFrame(() => {
+      dot.style.transform = `translate(${Math.cos(angle)*dist}px, ${Math.sin(angle)*dist}px)`;
+      dot.style.opacity = '0';
+    });
+    setTimeout(() => dot.remove(), 420);
+  }
+}
+
+// ── Game Loop ──────────────────────────────────────────────────────────────
+let lastTime = 0;
+function loop(ts) {
+  if (!gameRunning) return;
+  const dt = Math.min(ts - lastTime, 50);
+  lastTime = ts;
+
+  // Spawn
+  if (ts - lastSpawn > spawnInterval) spawnWord();
+
+  // Move
+  const arenaH = arena.offsetHeight;
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = words[i];
+    w.y += w.speed * dt * 0.1;
+    w.el.style.top = w.y + 'px';
+
+    if (w.y > arenaH) {
+      arena.classList.add('flash');
+      setTimeout(() => arena.classList.remove('flash'), 300);
+      if (w === activeWord) { activeWord = null; input.value = ''; }
+      removeWord(w);
+      lives--;
+      updateHUD();
+      if (lives <= 0) { endGame(); return; }
+    }
+  }
+
+  rafId = requestAnimationFrame(loop);
+}
+
+// ── Level ──────────────────────────────────────────────────────────────────
+function checkLevel() {
+  const newLevel = Math.floor(score / 500) + 1;
+  if (newLevel > level) {
+    level = newLevel;
+    spawnInterval = Math.max(900, 2800 - (level - 1) * 180);
+    fallSpeed     = Math.min(0.9, 0.28 + (level - 1) * 0.04);
+    levelEl.textContent = level;
+  }
+}
+
+// ── WPM ───────────────────────────────────────────────────────────────────
+function updateWPM() {
+  const mins = (performance.now() - startTime) / 60000;
+  const wpm  = mins > 0 ? Math.round((charsTyped / 5) / mins) : 0;
+  wpmEl.textContent  = wpm;
+  wpm2El.textContent = wpm;
+}
+
+// ── HUD ───────────────────────────────────────────────────────────────────
+function updateHUD() {
+  scoreEl.textContent = score;
+  levelEl.textContent = level;
+  livesEl.textContent = '♥ '.repeat(Math.max(0, lives)).trim() || '—';
+}
+
+// ── End ───────────────────────────────────────────────────────────────────
+function endGame() {
+  gameRunning = false;
+  cancelAnimationFrame(rafId);
+  input.disabled = true;
+  const mins = (performance.now() - startTime) / 60000;
+  const wpm  = mins > 0 ? Math.round((charsTyped / 5) / mins) : 0;
+  document.getElementById('overlay-stats').innerHTML = `
+    <b>${score}</b> Punkte &nbsp;·&nbsp; Level <b>${level}</b><br>
+    <b>${wordsTyped}</b> Wörter getippt &nbsp;·&nbsp; <b>${wpm}</b> WPM
+  `;
+  overlay.querySelector('h1').textContent = 'GAME OVER';
+  overlay.querySelector('h1').style.color = '#f64';
+  overlay.querySelector('h1').style.textShadow = '0 0 30px #f00';
+  overlay.querySelector('.tagline').textContent = 'Versuch\'s nochmal!';
+  overlay.style.display = 'flex';
+}
+
+// ── Eingabe-Fix: Tab/Enter nicht weglassen ─────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.code === 'Escape') { clearActive(); input.value = ''; }
+});
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+</script>
+</body>
+</html>
