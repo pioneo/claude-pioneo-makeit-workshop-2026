@@ -1,234 +1,412 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MEMORY</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    background: #0d0d14;
-    color: #e0e0f0;
-    font-family: 'Courier New', monospace;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-
-  #topbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
-    max-width: 520px;
-    margin-bottom: 20px;
-    padding: 8px 16px;
-    border: 1px solid #1e1e30;
-    border-radius: 8px;
-    font-size: .85rem;
-    letter-spacing: 2px;
-    color: #556;
-  }
-  #topbar .val { color: #4df; font-size: 1rem; }
-
-  #grid {
-    display: grid;
-    grid-template-columns: repeat(4, 110px);
-    gap: 12px;
-  }
-
-  .card {
-    width: 110px;
-    height: 110px;
-    perspective: 600px;
-    cursor: pointer;
-  }
-
-  .card-inner {
-    width: 100%;
-    height: 100%;
-    position: relative;
-    transform-style: preserve-3d;
-    transition: transform 0.4s ease;
-    border-radius: 10px;
-  }
-
-  .card.flipped .card-inner,
-  .card.matched .card-inner {
-    transform: rotateY(180deg);
-  }
-
-  .card-front, .card-back {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    backface-visibility: hidden;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 2.8rem;
-    user-select: none;
-  }
-
-  .card-front {
-    background: #12121e;
-    border: 1px solid #2a2a40;
-    color: #2a2a40;
-    font-size: 1.4rem;
-    letter-spacing: 4px;
-  }
-
-  .card-back {
-    background: #1a1a2e;
-    border: 2px solid #4df;
-    box-shadow: 0 0 12px rgba(68,221,255,0.2);
-    transform: rotateY(180deg);
-  }
-
-  .card.matched .card-back {
-    border-color: #4f8;
-    box-shadow: 0 0 16px rgba(68,255,136,0.3);
-    background: #0f1e14;
-  }
-
-  #overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.85);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 20px;
-    z-index: 10;
-  }
-  #overlay h1 {
-    font-size: 2rem;
-    letter-spacing: 6px;
-    color: #4df;
-    text-shadow: 0 0 20px #4df8;
-  }
-  #overlay p {
-    color: #888;
-    font-size: .9rem;
-    letter-spacing: 2px;
-    text-align: center;
-  }
-  #overlay .score {
-    font-size: 1.3rem;
-    color: #4f8;
-    letter-spacing: 3px;
-  }
-  button {
-    background: transparent;
-    border: 1px solid #4df;
-    color: #4df;
-    font-family: 'Courier New', monospace;
-    font-size: 1rem;
-    letter-spacing: 4px;
-    padding: 12px 32px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all .2s;
-    margin-top: 8px;
-  }
-  button:hover {
-    background: #4df;
-    color: #0d0d14;
-    box-shadow: 0 0 16px #4df8;
-  }
-</style>
+  <meta charset="UTF-8">
+  <title>⚡ Wizard Pong</title>
+  <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Cinzel:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #08060f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Cinzel', 'Georgia', serif;
+      color: #f0d080;
+      overflow: hidden;
+      user-select: none;
+    }
+    #title {
+      font-size: 15px;
+      letter-spacing: 0.25em;
+      color: #c8a84b;
+      text-shadow: 0 0 18px rgba(255,200,60,0.6);
+      margin-bottom: 10px;
+    }
+    canvas {
+      display: block;
+      border: 2px solid #4a3000;
+      border-radius: 3px;
+      box-shadow:
+        0 0 0 1px #7a5500,
+        0 0 40px rgba(120,60,200,0.35),
+        0 0 80px rgba(80,30,160,0.2);
+    }
+    #info {
+      margin-top: 12px;
+      font-size: 11px;
+      color: rgba(200,168,75,0.4);
+      letter-spacing: 0.12em;
+    }
+  </style>
 </head>
 <body>
-
-<div id="topbar">
-  <span>VERSUCHE <span class="val" id="moves">0</span></span>
-  <span>MEMORY</span>
-  <span>PAARE <span class="val" id="pairs">0</span>/8</span>
-</div>
-
-<div id="grid"></div>
-
-<div id="overlay">
-  <h1>MEMORY</h1>
-  <p>Finde alle Paare!</p>
-  <p>Drehe zwei Karten um — passen sie, bleiben sie aufgedeckt.</p>
-  <button onclick="startGame()">STARTEN</button>
-</div>
+<div id="title">✦ WIZARD PONG ✦</div>
+<canvas id="c"></canvas>
+<div id="info">W / S &nbsp;·&nbsp; Dein Zauberstab &nbsp;&nbsp;&nbsp;&nbsp; Voldemort spielt rechts</div>
 
 <script>
-const EMOJIS = ['🚀','🎯','⚡','🔥','🌊','🎮','💎','🦄'];
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
 
-let flipped = [], matched = 0, moves = 0, locked = false;
+const W = 800, H = 500;
+canvas.width  = W;
+canvas.height = H;
 
-function startGame() {
-  document.getElementById('overlay').style.display = 'none';
-  flipped = []; matched = 0; moves = 0; locked = false;
-  document.getElementById('moves').textContent = 0;
-  document.getElementById('pairs').textContent = 0;
+// ── Sterne im Hintergrund ─────────────────────────────────────────────────
+const STARS = Array.from({length: 120}, () => ({
+  x: Math.random() * W,
+  y: Math.random() * H,
+  r: Math.random() * 1.2 + 0.2,
+  a: Math.random(),
+  da: (Math.random() - 0.5) * 0.008,
+}));
 
-  const cards = [...EMOJIS, ...EMOJIS]
-    .sort(() => Math.random() - .5);
-
-  const grid = document.getElementById('grid');
-  grid.innerHTML = '';
-
-  cards.forEach((emoji, i) => {
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.dataset.emoji = emoji;
-    card.innerHTML = `
-      <div class="card-inner">
-        <div class="card-front">▪▪▪</div>
-        <div class="card-back">${emoji}</div>
-      </div>`;
-    card.addEventListener('click', () => flipCard(card));
-    grid.appendChild(card);
-  });
-}
-
-function flipCard(card) {
-  if (locked || card.classList.contains('flipped') || card.classList.contains('matched')) return;
-  card.classList.add('flipped');
-  flipped.push(card);
-
-  if (flipped.length === 2) {
-    locked = true;
-    moves++;
-    document.getElementById('moves').textContent = moves;
-
-    if (flipped[0].dataset.emoji === flipped[1].dataset.emoji) {
-      flipped.forEach(c => c.classList.add('matched'));
-      matched++;
-      document.getElementById('pairs').textContent = matched;
-      flipped = [];
-      locked = false;
-      if (matched === 8) showWin();
-    } else {
-      setTimeout(() => {
-        flipped.forEach(c => c.classList.remove('flipped'));
-        flipped = [];
-        locked = false;
-      }, 900);
-    }
+// ── Partikel (Zauberstaub) ────────────────────────────────────────────────
+const particles = [];
+function spawnParticles(x, y, color) {
+  for (let i = 0; i < 14; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      color,
+      r: Math.random() * 3 + 1,
+    });
   }
 }
 
-function showWin() {
-  const overlay = document.getElementById('overlay');
-  overlay.innerHTML = `
-    <h1>GEWONNEN!</h1>
-    <p class="score">${moves} VERSUCHE</p>
-    <p>${moves <= 12 ? '🏆 Perfekt!' : moves <= 18 ? '⭐ Super!' : '👍 Gut gemacht!'}</p>
-    <button onclick="startGame()">NOCHMAL</button>
-  `;
-  overlay.style.display = 'flex';
+// ── Farben ────────────────────────────────────────────────────────────────
+const COL = {
+  bg1:      '#08060f',
+  bg2:      '#120820',
+  net:      'rgba(180,130,50,0.15)',
+  p1paddle: '#8b3cf7',   // lila — Gryffindor-Zauberer
+  p2paddle: '#2dff80',   // gift-grün — Voldemort
+  ball:     '#ffd700',   // Goldener Schnatz
+  glow:     'rgba(255,210,0,0.9)',
+  score:    '#f0d080',
+  gold:     '#c8a84b',
+  win:      '#ffd700',
+};
+
+// ── Spielobjekte ──────────────────────────────────────────────────────────
+const PAD_W = 10, PAD_H = 85, BALL_R = 9;
+const WIN_SCORE = 5;
+
+const p1 = { x: 32,          y: H/2 - PAD_H/2, score: 0 };
+const p2 = { x: W-32-PAD_W,  y: H/2 - PAD_H/2, score: 0 };
+
+let ball, state = 'pause', winner = '';
+let wingAngle = 0; // für Schnatz-Flügel-Animation
+
+function resetBall(dir = 1) {
+  const angle = (Math.random() * 0.5 - 0.25);
+  const speed = 5;
+  ball = { x: W/2, y: H/2,
+           vx: dir * speed * Math.cos(angle),
+           vy: speed * Math.sin(angle) };
 }
+
+function init() {
+  p1.score = 0; p2.score = 0;
+  p1.y = p2.y = H/2 - PAD_H/2;
+  state = 'pause'; winner = '';
+  resetBall(Math.random() < .5 ? 1 : -1);
+}
+init();
+
+// ── Input ─────────────────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' ') {
+    if (state === 'pause') state = 'play';
+    else if (state === 'win') init();
+  }
+  if (['ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+const SPEED = 5;
+
+// ── KI (Voldemort) ────────────────────────────────────────────────────────
+const AI_SPEED = 4.3, AI_REACT = 0.08;
+let aiTarget = H/2;
+function updateAI() {
+  if (ball.vx > 0) aiTarget += (ball.y - PAD_H/2 - aiTarget) * (1 - AI_REACT);
+  else             aiTarget += (H/2 - PAD_H/2 - aiTarget) * 0.03;
+  const center = p2.y + PAD_H/2;
+  if (aiTarget < center - 2) p2.y -= AI_SPEED;
+  else if (aiTarget > center + 2) p2.y += AI_SPEED;
+  p2.y = Math.max(0, Math.min(H - PAD_H, p2.y));
+}
+
+function movePaddles() {
+  if (keys['w'] || keys['W']) p1.y -= SPEED;
+  if (keys['s'] || keys['S']) p1.y += SPEED;
+  p1.y = Math.max(0, Math.min(H - PAD_H, p1.y));
+  updateAI();
+}
+
+// ── Physik ────────────────────────────────────────────────────────────────
+function collidePaddle(pad, color) {
+  if (
+    ball.x - BALL_R < pad.x + PAD_W &&
+    ball.x + BALL_R > pad.x &&
+    ball.y + BALL_R > pad.y &&
+    ball.y - BALL_R < pad.y + PAD_H
+  ) {
+    const relY  = (ball.y - (pad.y + PAD_H/2)) / (PAD_H/2);
+    const angle = relY * (Math.PI / 3.5);
+    const speed = Math.min(Math.hypot(ball.vx, ball.vy) + 0.3, 14);
+    const dir   = ball.vx < 0 ? 1 : -1;
+    ball.vx = dir * speed * Math.cos(angle);
+    ball.vy = speed * Math.sin(angle);
+    ball.x  = pad.x + (dir === 1 ? PAD_W + BALL_R + 1 : -BALL_R - 1);
+    spawnParticles(ball.x, ball.y, color);
+  }
+}
+
+function updateBall() {
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+  if (ball.y - BALL_R < 0)  { ball.y = BALL_R;     ball.vy *= -1; spawnParticles(ball.x, 0, COL.ball); }
+  if (ball.y + BALL_R > H)  { ball.y = H - BALL_R; ball.vy *= -1; spawnParticles(ball.x, H, COL.ball); }
+  collidePaddle(p1, COL.p1paddle);
+  collidePaddle(p2, COL.p2paddle);
+  if (ball.x < 0)  { p2.score++; checkWin(2); resetBall(1);  }
+  if (ball.x > W)  { p1.score++; checkWin(1); resetBall(-1); }
+}
+
+function checkWin(player) {
+  const p = player === 1 ? p1 : p2;
+  if (p.score >= WIN_SCORE) {
+    state  = 'win';
+    winner = player === 1 ? 'Expecto Victorium!' : 'Voldemort siegt!';
+  }
+}
+
+// ── Partikel updaten ──────────────────────────────────────────────────────
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.05;
+    p.life -= 0.04;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+// ── Zeichnen ──────────────────────────────────────────────────────────────
+function drawBg() {
+  // Verlauf Hintergrund
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#08060f');
+  grad.addColorStop(1, '#120820');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Sterne
+  for (const s of STARS) {
+    s.a += s.da;
+    if (s.a < 0) s.a = 0, s.da *= -1;
+    if (s.a > 1) s.a = 1, s.da *= -1;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(255,230,150,${s.a * 0.7})`;
+    ctx.fill();
+  }
+}
+
+function drawNet() {
+  // Ornamentale Mittellinie
+  const x = W/2;
+  ctx.strokeStyle = COL.net;
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([6, 12]);
+  ctx.beginPath();
+  ctx.moveTo(x, 0); ctx.lineTo(x, H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Kleines Wappen in der Mitte
+  ctx.font      = '22px serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(180,130,50,0.25)';
+  ctx.fillText('⚡', x, H/2 + 8);
+}
+
+function drawPaddle(pad, color) {
+  // Zauberstab-förmig: schmaler, mit Leuchteffekt
+  const grd = ctx.createLinearGradient(pad.x, pad.y, pad.x + PAD_W, pad.y + PAD_H);
+  grd.addColorStop(0,   color);
+  grd.addColorStop(0.5, '#ffffff');
+  grd.addColorStop(1,   color);
+
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = 18;
+  ctx.fillStyle   = grd;
+  ctx.beginPath();
+  ctx.roundRect(pad.x, pad.y, PAD_W, PAD_H, 5);
+  ctx.fill();
+
+  // Spitze des Zauberstabs
+  ctx.shadowBlur = 30;
+  ctx.fillStyle  = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(pad.x + PAD_W/2, pad.y + 6, 4, 0, Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawBall() {
+  wingAngle += 0.12;
+
+  // Äußerer Glow
+  const grad = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, BALL_R * 6);
+  grad.addColorStop(0,   'rgba(255,210,0,0.4)');
+  grad.addColorStop(0.5, 'rgba(255,160,0,0.12)');
+  grad.addColorStop(1,   'rgba(255,100,0,0)');
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, BALL_R * 6, 0, Math.PI*2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Flügel (Goldener Schnatz)
+  const wingSpan = 14 + Math.sin(wingAngle) * 4;
+  ctx.shadowColor = 'rgba(255,200,0,0.8)';
+  ctx.shadowBlur  = 12;
+  ctx.strokeStyle = 'rgba(255,220,60,0.7)';
+  ctx.lineWidth   = 2;
+  // Linker Flügel
+  ctx.beginPath();
+  ctx.moveTo(ball.x - BALL_R, ball.y);
+  ctx.bezierCurveTo(
+    ball.x - BALL_R - wingSpan, ball.y - 10,
+    ball.x - BALL_R - wingSpan, ball.y + 10,
+    ball.x - BALL_R, ball.y
+  );
+  ctx.stroke();
+  // Rechter Flügel
+  ctx.beginPath();
+  ctx.moveTo(ball.x + BALL_R, ball.y);
+  ctx.bezierCurveTo(
+    ball.x + BALL_R + wingSpan, ball.y - 10,
+    ball.x + BALL_R + wingSpan, ball.y + 10,
+    ball.x + BALL_R, ball.y
+  );
+  ctx.stroke();
+
+  // Ball (goldene Kugel)
+  ctx.shadowColor = COL.glow;
+  ctx.shadowBlur  = 25;
+  const ballGrad  = ctx.createRadialGradient(ball.x - 2, ball.y - 2, 1, ball.x, ball.y, BALL_R);
+  ballGrad.addColorStop(0, '#fff8a0');
+  ballGrad.addColorStop(0.5, '#ffd700');
+  ballGrad.addColorStop(1, '#b8860b');
+  ctx.fillStyle = ballGrad;
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur  = 8;
+    ctx.fillStyle   = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur  = 0;
+}
+
+function drawScores() {
+  ctx.font        = 'bold 44px "Cinzel", Georgia, serif';
+  ctx.textAlign   = 'center';
+  ctx.shadowColor = 'rgba(255,200,0,0.6)';
+  ctx.shadowBlur  = 16;
+  ctx.fillStyle   = COL.score;
+  ctx.fillText(p1.score, W/4,   68);
+  ctx.fillText(p2.score, W*3/4, 68);
+  ctx.shadowBlur  = 0;
+
+  // Labels
+  ctx.font      = '10px "Cinzel", Georgia, serif';
+  ctx.fillStyle = 'rgba(200,168,75,0.4)';
+  ctx.fillText('DU', W/4,   84);
+  ctx.fillText('VOLDEMORT', W*3/4, 84);
+}
+
+function drawOverlay() {
+  ctx.fillStyle = 'rgba(4,2,12,0.7)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  if (state === 'pause') {
+    ctx.font        = 'bold 46px "Cinzel", Georgia, serif';
+    ctx.fillStyle   = COL.win;
+    ctx.shadowColor = 'rgba(255,200,0,0.8)';
+    ctx.shadowBlur  = 30;
+    ctx.fillText('⚡ WIZARD PONG ⚡', W/2, H/2 - 28);
+    ctx.shadowBlur = 0;
+    ctx.font      = '14px "Cinzel", Georgia, serif';
+    ctx.fillStyle = 'rgba(200,168,75,0.6)';
+    ctx.fillText('Drücke LEERTASTE um zu zaubern', W/2, H/2 + 18);
+    ctx.font      = '11px "Cinzel", Georgia, serif';
+    ctx.fillStyle = 'rgba(200,168,75,0.3)';
+    ctx.fillText('Erster auf 5 Punkte gewinnt', W/2, H/2 + 44);
+  } else if (state === 'win') {
+    const isWin = winner.includes('Victorium');
+    ctx.font        = '13px "Cinzel", Georgia, serif';
+    ctx.fillStyle   = 'rgba(200,168,75,0.5)';
+    ctx.fillText(isWin ? '✦ ACCIO VICTORY ✦' : '☠ AVADA KEDAVRA ☠', W/2, H/2 - 54);
+
+    ctx.font        = 'bold 38px "Cinzel", Georgia, serif';
+    ctx.fillStyle   = isWin ? '#ffd700' : '#2dff80';
+    ctx.shadowColor = isWin ? 'rgba(255,200,0,0.9)' : 'rgba(40,255,100,0.9)';
+    ctx.shadowBlur  = 35;
+    ctx.fillText(winner, W/2, H/2 + 8);
+    ctx.shadowBlur  = 0;
+
+    ctx.font      = '12px "Cinzel", Georgia, serif';
+    ctx.fillStyle = 'rgba(200,168,75,0.4)';
+    ctx.fillText('LEERTASTE für neues Duell', W/2, H/2 + 52);
+  }
+}
+
+// ── Loop ──────────────────────────────────────────────────────────────────
+function loop() {
+  if (state === 'play') {
+    movePaddles();
+    updateBall();
+    updateParticles();
+  }
+
+  drawBg();
+  drawNet();
+  drawPaddle(p1, COL.p1paddle);
+  drawPaddle(p2, COL.p2paddle);
+  drawBall();
+  drawParticles();
+  drawScores();
+
+  if (state !== 'play') drawOverlay();
+
+  requestAnimationFrame(loop);
+}
+loop();
 </script>
 </body>
 </html>
