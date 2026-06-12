@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MEMORY</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d0d14;
+    color: #e0e0f0;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  #topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    max-width: 520px;
+    margin-bottom: 20px;
+    padding: 8px 16px;
+    border: 1px solid #1e1e30;
+    border-radius: 8px;
+    font-size: .85rem;
+    letter-spacing: 2px;
+    color: #556;
+  }
+  #topbar .val { color: #4df; font-size: 1rem; }
+
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(4, 110px);
+    gap: 12px;
+  }
+
+  .card {
+    width: 110px;
+    height: 110px;
+    perspective: 600px;
+    cursor: pointer;
+  }
+
+  .card-inner {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.4s ease;
+    border-radius: 10px;
+  }
+
+  .card.flipped .card-inner,
+  .card.matched .card-inner {
+    transform: rotateY(180deg);
+  }
+
+  .card-front, .card-back {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    backface-visibility: hidden;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.8rem;
+    user-select: none;
+  }
+
+  .card-front {
+    background: #12121e;
+    border: 1px solid #2a2a40;
+    color: #2a2a40;
+    font-size: 1.4rem;
+    letter-spacing: 4px;
+  }
+
+  .card-back {
+    background: #1a1a2e;
+    border: 2px solid #4df;
+    box-shadow: 0 0 12px rgba(68,221,255,0.2);
+    transform: rotateY(180deg);
+  }
+
+  .card.matched .card-back {
+    border-color: #4f8;
+    box-shadow: 0 0 16px rgba(68,255,136,0.3);
+    background: #0f1e14;
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    z-index: 10;
+  }
+  #overlay h1 {
+    font-size: 2rem;
+    letter-spacing: 6px;
+    color: #4df;
+    text-shadow: 0 0 20px #4df8;
+  }
+  #overlay p {
+    color: #888;
+    font-size: .9rem;
+    letter-spacing: 2px;
+    text-align: center;
+  }
+  #overlay .score {
+    font-size: 1.3rem;
+    color: #4f8;
+    letter-spacing: 3px;
+  }
+  button {
+    background: transparent;
+    border: 1px solid #4df;
+    color: #4df;
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    letter-spacing: 4px;
+    padding: 12px 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .2s;
+    margin-top: 8px;
+  }
+  button:hover {
+    background: #4df;
+    color: #0d0d14;
+    box-shadow: 0 0 16px #4df8;
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <span>VERSUCHE <span class="val" id="moves">0</span></span>
+  <span>MEMORY</span>
+  <span>PAARE <span class="val" id="pairs">0</span>/8</span>
+</div>
+
+<div id="grid"></div>
+
+<div id="overlay">
+  <h1>MEMORY</h1>
+  <p>Finde alle Paare!</p>
+  <p>Drehe zwei Karten um — passen sie, bleiben sie aufgedeckt.</p>
+  <button onclick="startGame()">STARTEN</button>
+</div>
+
+<script>
+const EMOJIS = ['🚀','🎯','⚡','🔥','🌊','🎮','💎','🦄'];
+
+let flipped = [], matched = 0, moves = 0, locked = false;
+
+function startGame() {
+  document.getElementById('overlay').style.display = 'none';
+  flipped = []; matched = 0; moves = 0; locked = false;
+  document.getElementById('moves').textContent = 0;
+  document.getElementById('pairs').textContent = 0;
+
+  const cards = [...EMOJIS, ...EMOJIS]
+    .sort(() => Math.random() - .5);
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+
+  cards.forEach((emoji, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.emoji = emoji;
+    card.innerHTML = `
+      <div class="card-inner">
+        <div class="card-front">▪▪▪</div>
+        <div class="card-back">${emoji}</div>
+      </div>`;
+    card.addEventListener('click', () => flipCard(card));
+    grid.appendChild(card);
+  });
+}
+
+function flipCard(card) {
+  if (locked || card.classList.contains('flipped') || card.classList.contains('matched')) return;
+  card.classList.add('flipped');
+  flipped.push(card);
+
+  if (flipped.length === 2) {
+    locked = true;
+    moves++;
+    document.getElementById('moves').textContent = moves;
+
+    if (flipped[0].dataset.emoji === flipped[1].dataset.emoji) {
+      flipped.forEach(c => c.classList.add('matched'));
+      matched++;
+      document.getElementById('pairs').textContent = matched;
+      flipped = [];
+      locked = false;
+      if (matched === 8) showWin();
+    } else {
+      setTimeout(() => {
+        flipped.forEach(c => c.classList.remove('flipped'));
+        flipped = [];
+        locked = false;
+      }, 900);
+    }
+  }
+}
+
+function showWin() {
+  const overlay = document.getElementById('overlay');
+  overlay.innerHTML = `
+    <h1>GEWONNEN!</h1>
+    <p class="score">${moves} VERSUCHE</p>
+    <p>${moves <= 12 ? '🏆 Perfekt!' : moves <= 18 ? '⭐ Super!' : '👍 Gut gemacht!'}</p>
+    <button onclick="startGame()">NOCHMAL</button>
+  `;
+  overlay.style.display = 'flex';
+}
+</script>
+</body>
+</html>
