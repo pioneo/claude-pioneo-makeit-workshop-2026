@@ -20,46 +20,95 @@
       border-radius: 12px;
       box-shadow: 0 8px 40px rgba(0,0,0,0.6);
       cursor: pointer;
+      touch-action: none;
     }
-    #hint {
-      color: #fff;
-      margin-top: 12px;
-      font-size: 13px;
-      opacity: 0.5;
+    #hint { color:#fff; margin-top:12px; font-size:13px; opacity:0.5; }
+
+    /* Name-Eingabe Overlay */
+    #nameOverlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 14px; z-index: 10;
     }
+    #nameOverlay h2 { color:#FFD700; font-size:1.5rem; letter-spacing:2px; }
+    #nameOverlay p  { color:#aaa; font-size:0.9rem; }
+    #nameInput {
+      padding: 10px 18px; font-size: 1.2rem; border-radius: 8px;
+      border: 2px solid #FFD700; background: #fff8e7;
+      outline: none; text-align: center; width: 220px;
+    }
+    #nameBtn {
+      padding: 9px 28px; background: #FFD700; border: none;
+      border-radius: 8px; font-size: 1rem; font-weight: bold;
+      cursor: pointer; color: #222;
+    }
+    #nameBtn:hover { background: #ffc200; }
   </style>
 </head>
 <body>
 <canvas id="c" width="360" height="640"></canvas>
 <div id="hint">Klick oder Leertaste</div>
+
+<!-- Name-Eingabe beim ersten Highscore -->
+<div id="nameOverlay" style="display:none">
+  <h2>🏆 Neuer Highscore!</h2>
+  <p>Wie heißt du?</p>
+  <input id="nameInput" type="text" maxlength="20" placeholder="Dein Name…" autocomplete="off">
+  <button id="nameBtn">Eintragen!</button>
+</div>
+
 <script>
 const canvas = document.getElementById('c');
 const ctx    = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
 
-// ── Konstanten ───────────────────────────────────────────────────────────────
-const GRAVITY    = 0.5;
-const JUMP       = -9.5;
-const PIPE_SPD   = 2.8;
-const PIPE_GAP   = 155;
-const PIPE_DIST  = 230;
-const GROUND_H   = 60;
-const BIRD_X     = 80;
-const PIPE_W     = 52;
+// ── Physik-Konstanten ─────────────────────────────────────────────────────────
+const GRAVITY   = 0.32;
+const JUMP      = -7.2;
+const MAX_FALL  = 7;    // Fallgeschwindigkeit begrenzen
+const PIPE_SPD  = 2.6;
+const PIPE_GAP  = 165;    // etwas mehr Platz
+const PIPE_DIST = 235;
+const GROUND_H  = 60;
+const BIRD_X    = 80;
+const PIPE_W    = 52;
 
-// ── Zustand ──────────────────────────────────────────────────────────────────
-let state = 'idle';   // idle | play | dead
+// Kollisionsradius kleiner als optischer Vogel → fair
+const HIT_R     = 10;
+
+// ── Highscore (localStorage) ──────────────────────────────────────────────────
+const LS_KEY = 'flappy_scores_v1';
+function loadScores() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; }
+  catch { return []; }
+}
+function saveScore(name, pts) {
+  const list = loadScores();
+  list.push({ name, pts, date: new Date().toLocaleDateString('de-DE') });
+  list.sort((a, b) => b.pts - a.pts);
+  localStorage.setItem(LS_KEY, JSON.stringify(list.slice(0, 10)));
+}
+
+// ── Zustand ───────────────────────────────────────────────────────────────────
+let state = 'idle';   // idle | play | dead | enterName
 let score = 0, best = 0;
 let bird, pipes, tick;
+// Merkt ob in diesem Run schon ein Name eingetragen wurde
+let nameAsked = false;
 
 function reset() {
   bird  = { y: H / 2 - 20, vy: 0, angle: 0 };
   pipes = [];
   tick  = 0;
   score = 0;
+  nameAsked = false;
 }
 
+// ── Steuerung ─────────────────────────────────────────────────────────────────
 function flap() {
+  if (state === 'enterName') return;
   if (state === 'dead')  { state = 'idle'; reset(); return; }
   if (state === 'idle')  { state = 'play'; }
   bird.vy = JUMP;
@@ -70,27 +119,46 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Space') { e.preventDefault(); flap(); }
 });
 
-// ── Rohre ────────────────────────────────────────────────────────────────────
+// ── Name-Eingabe ──────────────────────────────────────────────────────────────
+function askName() {
+  state = 'enterName';
+  const overlay = document.getElementById('nameOverlay');
+  const input   = document.getElementById('nameInput');
+  overlay.style.display = 'flex';
+  input.value = '';
+  setTimeout(() => input.focus(), 80);
+
+  function submit() {
+    const name = input.value.trim() || 'Anonym';
+    saveScore(name, score);
+    overlay.style.display = 'none';
+    state = 'dead';
+  }
+  document.getElementById('nameBtn').onclick = submit;
+  input.onkeydown = e => { if (e.key === 'Enter') submit(); };
+}
+
+// ── Rohre ─────────────────────────────────────────────────────────────────────
 function addPipe() {
-  const minY = 70, maxY = H - GROUND_H - PIPE_GAP - 70;
+  const minY = 80, maxY = H - GROUND_H - PIPE_GAP - 80;
   const topH = minY + Math.random() * (maxY - minY);
   pipes.push({ x: W + 30, topH, scored: false });
 }
 
-// ── Kollision ────────────────────────────────────────────────────────────────
+// ── Kollision (kleinerer Hitbox-Radius) ───────────────────────────────────────
 function hit() {
-  const r = 13;
-  if (bird.y + r >= H - GROUND_H) return true;
-  if (bird.y - r <= 0)            return true;
+  if (bird.y + HIT_R >= H - GROUND_H) return true;
+  if (bird.y - HIT_R <= 0)            return true;
   for (const p of pipes) {
-    if (BIRD_X + r > p.x && BIRD_X - r < p.x + PIPE_W) {
-      if (bird.y - r < p.topH || bird.y + r > p.topH + PIPE_GAP) return true;
+    // nur prüfen wenn der Vogel horizontal im Rohrbereich ist
+    if (BIRD_X + HIT_R > p.x + 4 && BIRD_X - HIT_R < p.x + PIPE_W - 4) {
+      if (bird.y - HIT_R < p.topH || bird.y + HIT_R > p.topH + PIPE_GAP) return true;
     }
   }
   return false;
 }
 
-// ── Zeichnen ─────────────────────────────────────────────────────────────────
+// ── Zeichnen: Himmel ──────────────────────────────────────────────────────────
 function drawSky() {
   const g = ctx.createLinearGradient(0, 0, 0, H - GROUND_H);
   g.addColorStop(0, '#87CEEB');
@@ -102,11 +170,10 @@ function drawSky() {
 function drawClouds() {
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   [[50,55,26],[170,85,20],[280,48,30],[90,155,16],[240,130,22]].forEach(([cx,cy,r]) => {
-    const x = ((cx - tick * 0.25) % (W + 80) + W + 80) % (W + 80) - 40;
+    const x = ((cx - tick * 0.22) % (W + 80) + W + 80) % (W + 80) - 40;
     cloud(x, cy, r);
   });
 }
-
 function cloud(x, y, r) {
   ctx.beginPath();
   ctx.arc(x,         y,       r,        0, Math.PI*2);
@@ -116,7 +183,7 @@ function cloud(x, y, r) {
 }
 
 function drawGround() {
-  const off = (tick * 1.5 % 40 + 40) % 40;
+  const off = (tick * 1.4 % 40 + 40) % 40;
   ctx.fillStyle = '#8B6914';
   ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
   ctx.fillStyle = '#5DBB3F';
@@ -134,8 +201,6 @@ function drawGround() {
 function drawPipe(p) {
   const lip = 8, lipH = 14;
   const bot = p.topH + PIPE_GAP;
-
-  // oberes Rohr
   ctx.fillStyle = '#3aaa35';
   ctx.fillRect(p.x + lip, 0, PIPE_W - lip*2, p.topH - lipH);
   ctx.fillStyle = '#4dcc47';
@@ -143,7 +208,6 @@ function drawPipe(p) {
   ctx.fillStyle = '#2a8228';
   ctx.fillRect(p.x + PIPE_W - lip, 0, lip*0.5, p.topH - lipH);
 
-  // unteres Rohr
   ctx.fillStyle = '#3aaa35';
   ctx.fillRect(p.x + lip, bot + lipH, PIPE_W - lip*2, H - bot - lipH);
   ctx.fillStyle = '#4dcc47';
@@ -157,31 +221,26 @@ function drawBird() {
   ctx.translate(BIRD_X, bird.y);
   ctx.rotate(bird.angle);
 
-  // Körper
   ctx.fillStyle = '#FFD700';
   ctx.beginPath();
   ctx.ellipse(0, 0, 18, 14, 0, 0, Math.PI*2);
   ctx.fill();
 
-  // Flügel
   ctx.fillStyle = '#FFA500';
   ctx.beginPath();
   ctx.ellipse(-4, 5, 10, 6, -0.4, 0, Math.PI*2);
   ctx.fill();
 
-  // Augenweiß
   ctx.fillStyle = '#fff';
   ctx.beginPath();
   ctx.arc(8, -4, 6, 0, Math.PI*2);
   ctx.fill();
 
-  // Pupille
   ctx.fillStyle = '#111';
   ctx.beginPath();
   ctx.arc(10, -4, 3, 0, Math.PI*2);
   ctx.fill();
 
-  // Schnabel
   ctx.fillStyle = '#FF8C00';
   ctx.beginPath();
   ctx.moveTo(16, -1);
@@ -203,38 +262,7 @@ function drawScore() {
   ctx.fillText(score, W/2, 70);
 }
 
-function drawPanel(title, sub) {
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, W, H);
-
-  const bw=260, bh=180, bx=(W-bw)/2, by=(H-bh)/2-20, r=16;
-  ctx.fillStyle = '#fff8e7';
-  roundRect(bx, by, bw, bh, r);
-  ctx.fill();
-  ctx.strokeStyle = '#FFD700';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#222';
-  ctx.font = 'bold 34px Segoe UI';
-  ctx.fillText(title, W/2, by+52);
-
-  ctx.font = '17px Segoe UI';
-  ctx.fillStyle = '#555';
-  ctx.fillText(sub, W/2, by+90);
-
-  if (best > 0) {
-    ctx.font = 'bold 15px Segoe UI';
-    ctx.fillStyle = '#888';
-    ctx.fillText(`Bester: ${best}`, W/2, by+120);
-  }
-
-  ctx.font = '14px Segoe UI';
-  ctx.fillStyle = '#aaa';
-  ctx.fillText('Klick oder Leertaste', W/2, by+150);
-}
-
+// ── Hilfsfunktionen Panels ────────────────────────────────────────────────────
 function roundRect(x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x+r, y);
@@ -249,6 +277,97 @@ function roundRect(x, y, w, h, r) {
   ctx.closePath();
 }
 
+// ── Highscore-Tabelle im Panel ────────────────────────────────────────────────
+function drawHighscoreTable(x, y, w) {
+  const scores = loadScores();
+  if (!scores.length) return;
+
+  ctx.fillStyle = '#666';
+  ctx.font = 'bold 12px Segoe UI';
+  ctx.textAlign = 'center';
+  ctx.fillText('🏆 HIGHSCORES', x + w/2, y);
+
+  ctx.font = '13px Segoe UI';
+  ctx.textAlign = 'left';
+  const max = Math.min(scores.length, 5);
+  for (let i = 0; i < max; i++) {
+    const s = scores[i];
+    const row = y + 18 + i * 20;
+    const medal = ['🥇','🥈','🥉'][i] || `${i+1}.`;
+    ctx.fillStyle = i === 0 ? '#c8960c' : '#555';
+    ctx.fillText(`${medal}`, x + 6, row);
+    ctx.fillStyle = '#333';
+    ctx.fillText(s.name, x + 30, row);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#888';
+    ctx.fillText(`${s.pts}`, x + w - 6, row);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawStartPanel() {
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(0, 0, W, H);
+
+  const scores = loadScores();
+  const bh = scores.length ? 290 : 180;
+  const bw = 270, bx = (W-bw)/2, by = (H-bh)/2 - 10, r = 16;
+
+  ctx.fillStyle = '#fff8e7';
+  roundRect(bx, by, bw, bh, r); ctx.fill();
+  ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 3; ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 34px Segoe UI';
+  ctx.fillText('Flappy Vogel 🐦', W/2, by + 50);
+
+  ctx.font = '16px Segoe UI'; ctx.fillStyle = '#555';
+  ctx.fillText('Tippe zum Starten!', W/2, by + 82);
+
+  ctx.font = '13px Segoe UI'; ctx.fillStyle = '#aaa';
+  ctx.fillText('Klick oder Leertaste', W/2, by + 108);
+
+  if (scores.length) {
+    ctx.fillStyle = '#ddd';
+    ctx.fillRect(bx + 10, by + 122, bw - 20, 1);
+    drawHighscoreTable(bx + 10, by + 136, bw - 20);
+  }
+}
+
+function drawDeadPanel() {
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, W, H);
+
+  const scores = loadScores();
+  const bh = scores.length ? 300 : 190;
+  const bw = 270, bx = (W-bw)/2, by = (H-bh)/2 - 10, r = 16;
+
+  ctx.fillStyle = '#fff8e7';
+  roundRect(bx, by, bw, bh, r); ctx.fill();
+  ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 3; ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#222';
+  ctx.font = 'bold 34px Segoe UI';
+  ctx.fillText('Autsch! 💥', W/2, by + 50);
+
+  ctx.font = '18px Segoe UI'; ctx.fillStyle = '#444';
+  ctx.fillText(`Punkte: ${score}`, W/2, by + 82);
+
+  ctx.font = 'bold 14px Segoe UI'; ctx.fillStyle = '#888';
+  ctx.fillText(`Bester: ${best}`, W/2, by + 108);
+
+  ctx.font = '13px Segoe UI'; ctx.fillStyle = '#aaa';
+  ctx.fillText('Klick zum Neustart', W/2, by + 132);
+
+  if (scores.length) {
+    ctx.fillStyle = '#ddd';
+    ctx.fillRect(bx + 10, by + 148, bw - 20, 1);
+    drawHighscoreTable(bx + 10, by + 164, bw - 20);
+  }
+}
+
 // ── Spielschleife ─────────────────────────────────────────────────────────────
 reset();
 
@@ -258,13 +377,13 @@ reset();
 
   if (state === 'play') {
     bird.vy    += GRAVITY;
+    if (bird.vy > MAX_FALL) bird.vy = MAX_FALL;
     bird.y     += bird.vy;
-    bird.angle  = Math.min(Math.max(bird.vy * 0.06, -0.5), 1.2);
+    // Winkel: sanfteres Mapping
+    bird.angle  = Math.min(Math.max(bird.vy * 0.055, -0.45), 1.1);
 
-    // Rohre spawnen
     if (!pipes.length || pipes[pipes.length-1].x < W - PIPE_DIST) addPipe();
 
-    // Rohre bewegen & punkte zählen
     for (const p of pipes) {
       p.x -= PIPE_SPD;
       if (!p.scored && p.x + PIPE_W < BIRD_X) {
@@ -275,18 +394,28 @@ reset();
     }
     pipes = pipes.filter(p => p.x > -100);
 
-    if (hit()) state = 'dead';
+    if (hit()) {
+      state = 'dead';
+      // Highscore-Eintrag anfragen wenn Platz in Top-10 oder Liste leer
+      const scores = loadScores();
+      const isTopTen = scores.length < 10 || score > scores[scores.length - 1].pts;
+      if (score > 0 && isTopTen && !nameAsked) {
+        nameAsked = true;
+        setTimeout(askName, 300);
+      }
+    }
   }
 
-  // ── Zeichnen ──
+  // Zeichnen
   drawSky();
   drawClouds();
   pipes.forEach(drawPipe);
   drawGround();
   drawBird();
-  if (state !== 'idle') drawScore();
-  if (state === 'idle') drawPanel('Flappy Vogel 🐦', 'Tippe zum Starten!');
-  if (state === 'dead') drawPanel('Autsch! 💥',      `Punkte: ${score}`);
+  if (state === 'play')                drawScore();
+  if (state === 'dead')              { drawScore(); drawDeadPanel(); }
+  if (state === 'idle')                drawStartPanel();
+  if (state === 'enterName')         { drawScore(); drawDeadPanel(); }
 })();
 </script>
 </body>
