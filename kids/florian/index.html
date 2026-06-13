@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Florians Flucht 🚗💨</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #111;
+      color: #fff;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1rem;
+      user-select: none;
+    }
+    h1 {
+      font-size: clamp(1.3rem, 4vw, 1.9rem);
+      font-weight: 900;
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 0 10px rgba(245,158,11,0.5));
+      margin-bottom: 0.2rem; text-align: center;
+    }
+    .subtitle { color: #666; font-size: 0.78rem; margin-bottom: 0.7rem; letter-spacing: 0.06em; text-align: center; }
+
+    .hud {
+      display: flex; gap: 0.8rem; margin-bottom: 0.5rem;
+    }
+    .hud-box {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(245,158,11,0.3);
+      border-radius: 10px; padding: 0.3rem 0.8rem; text-align: center; min-width: 80px;
+    }
+    .hud-label { font-size: 0.6rem; color: #888; letter-spacing: 0.1em; text-transform: uppercase; }
+    .hud-val   { font-size: 1.1rem; font-weight: 900; color: #f59e0b; }
+    #wanted-val { color: #ef4444; letter-spacing: 0.05em; }
+
+    .canvas-wrap {
+      position: relative; border-radius: 12px; overflow: hidden;
+      border: 2px solid rgba(245,158,11,0.3);
+      box-shadow: 0 0 40px rgba(245,158,11,0.15), 0 20px 60px rgba(0,0,0,0.8);
+    }
+    canvas { display: block; }
+
+    .overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.8rem;
+      background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);
+    }
+    .overlay.hidden { display: none; }
+    .ov-icon { font-size: 3.5rem; filter: drop-shadow(0 0 14px rgba(245,158,11,0.9)); }
+    .ov-title {
+      font-size: 1.8rem; font-weight: 900;
+      background: linear-gradient(135deg,#f59e0b,#ef4444);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .ov-msg { color: #999; font-size: 0.85rem; text-align: center; max-width: 240px; line-height: 1.5; }
+    .ov-score { color: #f59e0b; font-weight: 700; }
+    .btn {
+      padding: 0.7rem 2rem;
+      background: linear-gradient(135deg, #b45309, #f59e0b);
+      color: #000; border: none; border-radius: 50px;
+      font-size: 1rem; font-weight: 800; cursor: pointer;
+      font-family: inherit;
+      box-shadow: 0 4px 20px rgba(245,158,11,0.4);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(245,158,11,0.6); }
+    .controls-hint { color: #444; font-size: 0.7rem; margin-top: 0.5rem; text-align: center; }
+    .key { display:inline-block; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:4px; padding:0.1rem 0.4rem; font-size:0.68rem; color:#aaa; }
+  </style>
+</head>
+<body>
+<h1>🚗💨 Florians Flucht</h1>
+<p class="subtitle">Sammle Geld – und nicht erwischen lassen!</p>
+
+<div class="hud">
+  <div class="hud-box"><div class="hud-label">Geld</div><div class="hud-val" id="money-val">$0</div></div>
+  <div class="hud-box"><div class="hud-label">Gesucht</div><div class="hud-val" id="wanted-val">★☆☆☆☆</div></div>
+  <div class="hud-box"><div class="hud-label">Zeit</div><div class="hud-val" id="time-val">0s</div></div>
+</div>
+
+<div class="canvas-wrap">
+  <canvas id="c"></canvas>
+  <div class="overlay" id="overlay">
+    <div class="ov-icon" id="ov-icon">🚗</div>
+    <div class="ov-title" id="ov-title">FLUCHT!</div>
+    <div class="ov-msg" id="ov-msg">Florian muss entkommen! Sammel Geld ein und halte die Polizei auf Abstand!</div>
+    <div class="ov-score" id="ov-score" style="display:none"></div>
+    <button class="btn" id="btn-start" onclick="startGame()">🚗 Gas geben!</button>
+  </div>
+</div>
+<div class="controls-hint">
+  <span class="key">↑↓←→</span> oder <span class="key">WASD</span> · Ausweichen &amp; Geld sammeln
+</div>
+
+<script>
+const c   = document.getElementById('c');
+const ctx = c.getContext('2d');
+const W = 400, H = 560;
+c.width = W; c.height = H;
+
+// ── Road layout ──
+const ROAD_LEFT  = 60;
+const ROAD_RIGHT = 340;
+const ROAD_W     = ROAD_RIGHT - ROAD_LEFT;
+const LANES      = 4;
+const LANE_W     = ROAD_W / LANES;
+
+function laneX(lane) { return ROAD_LEFT + lane * LANE_W + LANE_W / 2; }
+
+// ── State ──
+let player, police, money, traffic, particles;
+let roadY, baseSpeed, elapsed, gameRunning, keys;
+let wantedLevel, wantedTimer, lastTime;
+
+function startGame() {
+  roadY      = 0;
+  baseSpeed  = 3;
+  elapsed    = 0;
+  wantedLevel = 1;
+  wantedTimer = 0;
+  gameRunning = true;
+  keys        = {};
+  particles   = [];
+
+  player = {
+    x: W/2, y: H - 110,
+    vx: 0, vy: 0,
+    w: 30, h: 52,
+    money: 0,
+    alive: true
+  };
+
+  police  = [];
+  money   = [];
+  traffic = [];
+
+  // Spawn initial money
+  for (let i=0;i<5;i++) spawnMoney();
+
+  document.getElementById('overlay').classList.add('hidden');
+  updateHUD();
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+}
+
+// ── Main loop ──
+function loop(ts) {
+  if (!gameRunning) return;
+  const dt = Math.min(ts - lastTime, 40);
+  lastTime = ts;
+  elapsed += dt / 1000;
+
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ── Update ──
+function update(dt) {
+  const spd = baseSpeed + elapsed * 0.04;
+
+  // Road scroll
+  roadY = (roadY + spd) % 80;
+
+  // Player input
+  const acc = 0.4, friction = 0.82, maxV = 5;
+  if (keys['ArrowLeft'] ||keys['a']||keys['A'])  player.vx -= acc;
+  if (keys['ArrowRight']||keys['d']||keys['D'])  player.vx += acc;
+  if (keys['ArrowUp']   ||keys['w']||keys['W'])  player.vy -= acc;
+  if (keys['ArrowDown'] ||keys['s']||keys['S'])  player.vy += acc;
+  player.vx = clamp(player.vx * friction, -maxV, maxV);
+  player.vy = clamp(player.vy * friction, -maxV, maxV);
+  player.x  = clamp(player.x + player.vx, ROAD_LEFT + player.w/2, ROAD_RIGHT - player.w/2);
+  player.y  = clamp(player.y + player.vy, H*0.3, H - player.h/2 - 10);
+
+  // Spawn
+  if (money.length < 6 + wantedLevel && Math.random() < 0.02) spawnMoney();
+  if (traffic.length < 4 && Math.random() < 0.015) spawnTraffic(spd);
+
+  // Police spawn
+  const targetCops = wantedLevel;
+  if (police.length < targetCops && Math.random() < 0.008) spawnPolice(spd);
+
+  // Move money & traffic downward (road flow)
+  money   = money.filter(m => { m.y += spd; return m.y < H + 40; });
+  traffic = traffic.filter(t => {
+    t.y += t.speed;
+    return t.y < H + 60;
+  });
+
+  // Police fahren geradeaus (von unten nach oben) – leichte Drift in Spielerrichtung
+  police.forEach(p => {
+    const pspd = spd + 0.3 + wantedLevel * 0.2;
+    // Nur leicht horizontal driften – kein direktes Zielen
+    const dx = player.x - p.x;
+    p.x += clamp(dx * 0.012, -1.2, 1.2);
+    p.y -= pspd;  // fährt von unten nach oben (kommt entgegen)
+    p.lightTimer = (p.lightTimer||0) + dt;
+  });
+  police = police.filter(p => p.y > -80);
+
+  // Collect money
+  money = money.filter(m => {
+    if (!m.collected && rectOverlap(player, m, 20)) {
+      m.collected = true;
+      player.money += m.value;
+      addParticles(m.x, m.y, '#fbbf24', 8);
+      return false;
+    }
+    return !m.collected;
+  });
+
+  // Traffic collision
+  traffic.forEach(t => {
+    if (rectOverlap(player, t, -4)) {
+      player.vx *= -0.8; player.vy = Math.max(player.vy, 2);
+      addParticles(player.x, player.y, '#ef4444', 6);
+    }
+  });
+
+  // Police collision
+  police.forEach(p => {
+    if (rectOverlap(player, p, -2)) caught();
+  });
+
+  // Wanted level (every 15s)
+  wantedTimer += dt/1000;
+  if (wantedTimer > 15 && wantedLevel < 5) {
+    wantedLevel++;
+    wantedTimer = 0;
+    baseSpeed += 0.3;
+  }
+
+  updateParticles();
+  updateHUD();
+}
+
+function spawnMoney() {
+  const lane = Math.floor(Math.random() * LANES);
+  const big  = Math.random() < 0.2;
+  money.push({
+    x: laneX(lane) + (Math.random()-0.5)*10,
+    y: -30 - Math.random()*200,
+    w: big?28:20, h: big?28:20,
+    value: big ? 500 : 100,
+    big, collected: false,
+    bob: Math.random()*Math.PI*2
+  });
+}
+
+function spawnTraffic(spd) {
+  const lane = Math.floor(Math.random() * LANES);
+  const colors = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#6366f1'];
+  traffic.push({
+    x: laneX(lane), y: -70,
+    w: 28, h: 50,
+    speed: spd * (0.4 + Math.random()*0.5),
+    color: colors[Math.floor(Math.random()*colors.length)]
+  });
+}
+
+function spawnPolice(spd) {
+  const lane = Math.floor(Math.random() * LANES);
+  police.push({
+    x: laneX(lane),
+    y: H + 60,  // spawnt unten, fährt nach oben entgegen
+    w: 28, h: 50,
+    speed: spd + 2,
+    lightTimer: 0
+  });
+}
+
+function caught() {
+  gameRunning = false;
+  const t = Math.floor(elapsed);
+  showOverlay('🚨','ERWISCHT!',
+    'Die Polizei hat Florian geschnappt! Versuch dein Glück nochmal!',
+    `Geld: $${player.money.toLocaleString()} · Zeit: ${t}s`,
+    '🔄 Nochmal flüchten!', startGame);
+}
+
+function showOverlay(icon, title, msg, score, btnText, cb) {
+  document.getElementById('ov-icon').textContent  = icon;
+  document.getElementById('ov-title').textContent = title;
+  document.getElementById('ov-msg').textContent   = msg;
+  const sd = document.getElementById('ov-score');
+  sd.style.display = 'block'; sd.textContent = score;
+  const btn = document.getElementById('btn-start');
+  btn.textContent = btnText; btn.onclick = cb;
+  document.getElementById('overlay').classList.remove('hidden');
+}
+
+function updateHUD() {
+  document.getElementById('money-val').textContent = '$' + player.money.toLocaleString();
+  document.getElementById('time-val').textContent  = Math.floor(elapsed) + 's';
+  const stars = '★'.repeat(wantedLevel) + '☆'.repeat(5-wantedLevel);
+  document.getElementById('wanted-val').textContent = stars;
+}
+
+// ── Particles ──
+function addParticles(x, y, color, n) {
+  for (let i=0;i<n;i++) {
+    const a = Math.PI*2/n*i+Math.random()*0.4;
+    particles.push({x,y,vx:Math.cos(a)*(1+Math.random()*3),vy:Math.sin(a)*(1+Math.random()*3),color,life:1,decay:0.05+Math.random()*0.04,r:2+Math.random()*3});
+  }
+}
+function updateParticles() {
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vx*=0.88;p.vy*=0.88;p.life-=p.decay;});
+}
+
+// ── Draw ──
+function draw() {
+  // Sky / sidewalk
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0,0,W,H);
+
+  // Sidewalks
+  ctx.fillStyle = '#2d2d3a';
+  ctx.fillRect(0,0,ROAD_LEFT,H);
+  ctx.fillRect(ROAD_RIGHT,0,W-ROAD_RIGHT,H);
+
+  // Sidewalk detail tiles
+  ctx.fillStyle = '#252535';
+  for (let y=(-roadY%40); y<H; y+=40) {
+    for (let x=0; x<ROAD_LEFT; x+=20) ctx.fillRect(x,y,19,39);
+    for (let x=ROAD_RIGHT; x<W; x+=20) ctx.fillRect(x,y,19,39);
+  }
+
+  // Road
+  ctx.fillStyle = '#2a2a2a';
+  ctx.fillRect(ROAD_LEFT,0,ROAD_W,H);
+
+  // Lane dashes
+  ctx.setLineDash([40,30]);
+  ctx.lineDashOffset = -roadY;
+  ctx.strokeStyle = '#ffeb3b';
+  ctx.lineWidth = 2;
+  // Center line
+  ctx.beginPath();
+  ctx.moveTo(W/2, 0); ctx.lineTo(W/2, H);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1.5;
+  for (let l=1;l<LANES;l++) {
+    if (l===LANES/2) continue;
+    const lx = ROAD_LEFT + l*LANE_W;
+    ctx.beginPath();
+    ctx.moveTo(lx,0); ctx.lineTo(lx,H);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Road edge lines
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(ROAD_LEFT,0); ctx.lineTo(ROAD_LEFT,H); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ROAD_RIGHT,0); ctx.lineTo(ROAD_RIGHT,H); ctx.stroke();
+
+  // Traffic
+  traffic.forEach(t => drawCar(t.x, t.y, t.w, t.h, t.color, false));
+
+  // Money
+  money.forEach(m => {
+    m.bob += 0.06;
+    const bob = Math.sin(m.bob)*3;
+    drawMoney(m.x, m.y+bob, m.big);
+  });
+
+  // Police
+  police.forEach(p => drawPolice(p));
+
+  // Player
+  drawPlayerCar();
+
+  // Particles
+  particles.forEach(p=>{
+    ctx.save(); ctx.globalAlpha=p.life;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=6;
+    ctx.fill(); ctx.restore();
+  });
+
+  // Wanted overlay at top
+  if (wantedLevel >= 4) {
+    ctx.fillStyle = `rgba(239,68,68,${0.04+0.04*Math.sin(Date.now()/120)})`;
+    ctx.fillRect(0,0,W,H);
+  }
+}
+
+function drawCar(x, y, w, h, color, isPlayer) {
+  // Shadow
+  ctx.fillStyle='rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(x+3, y+h/2+4, w*0.45, 6, 0, 0, Math.PI*2); ctx.fill();
+
+  // Body
+  ctx.fillStyle = color;
+  rr(x-w/2, y-h/2, w, h, 6); ctx.fill();
+
+  // Roof
+  ctx.fillStyle = darken(color, 0.2);
+  rr(x-w/2+4, y-h/2+8, w-8, h*0.45, 4); ctx.fill();
+
+  // Windshield
+  ctx.fillStyle='rgba(150,220,255,0.6)';
+  rr(x-w/2+5, y-h/2+9, w-10, h*0.2, 3); ctx.fill();
+
+  // Headlights (top = front if going up)
+  ctx.fillStyle='#fffde7';
+  ctx.shadowColor='#fff8'; ctx.shadowBlur=6;
+  ctx.fillRect(x-w/2+3, y-h/2+2, 7, 4);
+  ctx.fillRect(x+w/2-10,y-h/2+2, 7, 4);
+  ctx.shadowBlur=0;
+
+  // Taillights
+  ctx.fillStyle='#ef4444';
+  ctx.fillRect(x-w/2+3, y+h/2-5, 7, 4);
+  ctx.fillRect(x+w/2-10,y+h/2-5, 7, 4);
+
+  // Wheels
+  ctx.fillStyle='#111';
+  [[-w/2-1,-h/2+8],[w/2-4,-h/2+8],[-w/2-1,h/2-14],[w/2-4,h/2-14]].forEach(([wx,wy])=>{
+    ctx.fillRect(x+wx,y+wy,5,10);
+  });
+}
+
+function drawPlayerCar() {
+  const x=player.x, y=player.y;
+  // Glow
+  ctx.shadowColor='#ef4444'; ctx.shadowBlur=18;
+  drawCar(x, y, player.w, player.h, '#ef4444', true);
+  ctx.shadowBlur=0;
+
+  // Speed lines
+  if (Math.abs(player.vy)>0.5||baseSpeed>4) {
+    ctx.strokeStyle='rgba(255,255,255,0.15)';
+    ctx.lineWidth=1.5;
+    for (let i=0;i<3;i++){
+      const sx=x-8+i*8, sy=y+player.h/2;
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx,sy+14+Math.random()*6); ctx.stroke();
+    }
+  }
+}
+
+function drawPolice(p) {
+  drawCar(p.x, p.y, 28, 50, '#1e3a8a', false);
+  // Police stripes
+  ctx.fillStyle='#fff';
+  ctx.fillRect(p.x-14, p.y-8, 28, 4);
+  // Siren light (flashing)
+  const t = p.lightTimer;
+  const r = Math.floor(t/200)%2===0;
+  ctx.fillStyle = r ? '#ef4444' : '#3b82f6';
+  ctx.shadowColor = r ? '#ef4444' : '#3b82f6';
+  ctx.shadowBlur = 14;
+  ctx.beginPath(); ctx.arc(p.x-6, p.y-p.h/2+4, 5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = r ? '#3b82f6' : '#ef4444';
+  ctx.beginPath(); ctx.arc(p.x+6, p.y-p.h/2+4, 5, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+
+  // "POLIZEI" text
+  ctx.fillStyle='#fff';
+  ctx.font='bold 5px sans-serif';
+  ctx.textAlign='center';
+  ctx.fillText('POLIZEI', p.x, p.y+2);
+}
+
+function drawMoney(x, y, big) {
+  const r = big ? 14 : 10;
+  ctx.save();
+  ctx.shadowColor='#fbbf24'; ctx.shadowBlur=14;
+  // Coin
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+  const g=ctx.createRadialGradient(x-r*0.3,y-r*0.3,0,x,y,r);
+  g.addColorStop(0,'#fde68a'); g.addColorStop(1,'#d97706');
+  ctx.fillStyle=g; ctx.fill();
+  // $ sign
+  ctx.fillStyle='#92400e';
+  ctx.font=`bold ${big?14:10}px sans-serif`;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('$',x,y);
+  ctx.restore();
+}
+
+// ── Helpers ──
+function rr(x,y,w,h,r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+  ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+
+function darken(hex, amt) {
+  const c = parseInt(hex.slice(1),16);
+  const r = Math.max(0,((c>>16)&255)-Math.round(amt*255));
+  const g = Math.max(0,((c>>8)&255) -Math.round(amt*255));
+  const b = Math.max(0,(c&255)       -Math.round(amt*255));
+  return `rgb(${r},${g},${b})`;
+}
+
+function rectOverlap(a, b, shrink=0) {
+  return Math.abs(a.x-b.x) < (a.w+b.w)/2-shrink &&
+         Math.abs(a.y-b.y) < (a.h+b.h)/2-shrink;
+}
+
+function clamp(v,min,max) { return Math.max(min,Math.min(max,v)); }
+
+// ── Controls ──
+document.addEventListener('keydown', e=>{
+  keys[e.key]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup', e=>{ keys[e.key]=false; });
+
+// Touch swipe
+let t0=null;
+c.addEventListener('touchstart',e=>{t0={x:e.touches[0].clientX,y:e.touches[0].clientY};},{passive:true});
+c.addEventListener('touchmove',e=>{
+  if(!t0) return;
+  const dx=e.touches[0].clientX-t0.x, dy=e.touches[0].clientY-t0.y;
+  keys['ArrowLeft']=dx<-12; keys['ArrowRight']=dx>12;
+  keys['ArrowUp']=dy<-12;   keys['ArrowDown']=dy>12;
+  e.preventDefault();
+},{passive:false});
+c.addEventListener('touchend',()=>{ keys['ArrowLeft']=keys['ArrowRight']=keys['ArrowUp']=keys['ArrowDown']=false; t0=null; });
+
+// Initial draw
+ctx.fillStyle='#111'; ctx.fillRect(0,0,W,H);
+</script>
+</body>
+</html>
