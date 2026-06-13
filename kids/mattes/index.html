@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pong Snake 🐍🏓</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #060612;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #fff; gap: 0.6rem; user-select: none; padding: 0.8rem;
+    }
+    h1 {
+      font-size: clamp(1.3rem,4vw,2rem); font-weight: 900; letter-spacing: 0.08em;
+      background: linear-gradient(135deg,#4ade80,#38bdf8,#f9a8d4);
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+      filter: drop-shadow(0 0 12px rgba(74,222,128,0.3));
+    }
+    .wrap { position: relative; }
+    canvas { display: block; border-radius: 12px;
+      border: 2px solid rgba(74,222,128,0.2);
+      box-shadow: 0 0 40px rgba(74,222,128,0.08), 0 20px 60px rgba(0,0,0,0.7); }
+    .overlay {
+      position: absolute; top:0; left:0; width:100%; height:100%;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 0.8rem; background: rgba(6,6,18,0.88); backdrop-filter: blur(6px);
+      border-radius: 12px;
+    }
+    .overlay.hidden { display: none; }
+    .ov-icon { font-size: 3rem; animation: bob 2s ease-in-out infinite; }
+    @keyframes bob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+    .ov-title {
+      font-size: clamp(1.4rem,4vw,2rem); font-weight:900; letter-spacing:0.06em;
+      background: linear-gradient(135deg,#4ade80,#38bdf8);
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+      text-align:center;
+    }
+    .ov-title.p1win { background: linear-gradient(135deg,#f97316,#fbbf24);
+      -webkit-background-clip:text; background-clip:text; }
+    .ov-title.p2win { background: linear-gradient(135deg,#38bdf8,#818cf8);
+      -webkit-background-clip:text; background-clip:text; }
+    .ov-sub { font-size:0.78rem; color:#64748b; text-align:center; line-height:1.8; }
+    .ov-sub em { color:#a0b0c0; font-style:normal; font-weight:700; }
+    .mode-btns { display:flex; gap:0.7rem; }
+    .btn {
+      padding: 0.65rem 1.4rem; border-radius: 12px; border: none;
+      font-size: 0.9rem; font-weight: 800; cursor: pointer; letter-spacing: 0.04em;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn-green {
+      background: linear-gradient(135deg,#4ade80,#22d3ee); color:#042012;
+      box-shadow: 0 4px 16px rgba(74,222,128,0.35);
+    }
+    .btn-green:hover { box-shadow: 0 6px 24px rgba(74,222,128,0.5); }
+    .btn-gray {
+      background: rgba(255,255,255,0.08); border: 1.5px solid rgba(255,255,255,0.15); color:#94a3b8;
+    }
+    .controls-hint {
+      display:flex; gap:2rem; font-size:0.68rem; color:#334155; font-weight:700; letter-spacing:0.06em;
+    }
+    .c-p1 { color:#f97316; } .c-p2 { color:#38bdf8; }
+    .spark {
+      position:fixed; pointer-events:none; z-index:999;
+      font-size:1rem; animation: spk 0.9s ease-out forwards;
+    }
+    @keyframes spk {
+      0%  { opacity:1; transform:translate(0,0) scale(1); }
+      100%{ opacity:0; transform:translate(var(--dx),var(--dy)) scale(0.2) rotate(var(--r)); }
+    }
+  </style>
+</head>
+<body>
+
+<h1>🐍 Pong Snake 🏓</h1>
+
+<div class="wrap">
+  <canvas id="c"></canvas>
+  <div class="overlay" id="overlay">
+    <div class="ov-icon">🐍</div>
+    <div class="ov-title" id="ovTitle">Pong Snake</div>
+    <div class="ov-sub" id="ovSub">
+      <em>W/S</em> — Spieler 1 &nbsp;·&nbsp; <em>↑/↓</em> — Spieler 2<br>
+      Die Schlange wächst beim Früchte fressen!<br>
+      Erster mit <em>7 Punkten</em> gewinnt 🏆
+    </div>
+    <div class="mode-btns" id="modeBtns">
+      <button class="btn btn-green" onclick="startGame()">▶ Spielen!</button>
+    </div>
+    <button class="btn btn-green" id="rematchBtn" style="display:none" onclick="startGame()">🔄 Nochmal!</button>
+  </div>
+</div>
+
+<div class="controls-hint">
+  <span class="c-p1">🟠 W / S — Spieler 1</span>
+  <span class="c-p2">🔵 ↑ / ↓ — Spieler 2</span>
+</div>
+
+<script>
+const W=720, H=440;
+const PAD_W=14, PAD_H=90, PAD_SPD=6.5;
+const WIN=7;
+
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+cv.width=W; cv.height=H;
+
+// ── Snake (the ball) ──
+const SNAKE_BASE_LEN=12;
+let snake=null, score={p1:0,p2:0}, p1={x:22,y:H/2-PAD_H/2}, p2={x:W-22-PAD_W,y:H/2-PAD_H/2}, fruits=[], running=false, keys={};
+
+const FRUIT_COLS=[
+  {fill:'#ef4444',glow:'#ff4444',leaf:'#22c55e'},
+  {fill:'#f97316',glow:'#ff8800',leaf:'#84cc16'},
+  {fill:'#eab308',glow:'#ffcc00',leaf:'#22c55e'},
+  {fill:'#ec4899',glow:'#ff44aa',leaf:'#84cc16'},
+  {fill:'#8b5cf6',glow:'#aa66ff',leaf:'#4ade80'},
+];
+
+function initSnake(toP=1) {
+  const angle=(Math.random()*40-20)*(Math.PI/180);
+  const spd=5;
+  const dir=toP===1?-1:1;
+  return {
+    head:{x:W/2,y:H/2},
+    body:[], // array of {x,y}
+    vx:Math.cos(angle)*spd*dir,
+    vy:Math.sin(angle)*spd,
+    maxLen:SNAKE_BASE_LEN,
+    speed:spd,
+    hit:0, // flash timer on paddle hit
+  };
+}
+
+function spawnFruit() {
+  const margin=80;
+  let pos,tries=0;
+  do {
+    pos={x:margin+Math.random()*(W-margin*2), y:30+Math.random()*(H-60)};
+    tries++;
+  } while(tries<30 && fruits.some(f=>Math.hypot(f.x-pos.x,f.y-pos.y)<40));
+  const type=FRUIT_COLS[Math.floor(Math.random()*FRUIT_COLS.length)];
+  return {...pos,...type,r:10,pulse:Math.random()*Math.PI*2};
+}
+
+function startGame() {
+  p1={x:22,y:H/2-PAD_H/2};
+  p2={x:W-22-PAD_W,y:H/2-PAD_H/2};
+  score={p1:0,p2:0};
+  keys={};
+  fruits=[];
+  fruits=[spawnFruit(),spawnFruit(),spawnFruit()];
+  snake=initSnake(Math.random()<.5?1:2);
+  running=true;
+  document.getElementById('overlay').classList.add('hidden');
+  document.getElementById('rematchBtn').style.display='none';
+  document.getElementById('modeBtns').style.display='flex';
+}
+
+// ── Input ──
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  if(['ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup',e=>keys[e.key]=false);
+
+// ── Update ──
+function update() {
+  // Paddles
+  if(keys['w']||keys['W']) p1.y=Math.max(0,p1.y-PAD_SPD);
+  if(keys['s']||keys['S']) p1.y=Math.min(H-PAD_H,p1.y+PAD_SPD);
+  if(keys['ArrowUp'])      p2.y=Math.max(0,p2.y-PAD_SPD);
+  if(keys['ArrowDown'])    p2.y=Math.min(H-PAD_H,p2.y+PAD_SPD);
+
+  // Move snake head
+  snake.head.x+=snake.vx;
+  snake.head.y+=snake.vy;
+
+  // Record body
+  snake.body.unshift({x:snake.head.x,y:snake.head.y});
+  if(snake.body.length>snake.maxLen*4) snake.body.pop();
+
+  if(snake.hit>0) snake.hit--;
+
+  const {x,y}=snake.head;
+  const R=9; // head radius
+
+  // Top/bottom bounce
+  if(y-R<=0)   {snake.vy=Math.abs(snake.vy);  snake.head.y=R;}
+  if(y+R>=H)   {snake.vy=-Math.abs(snake.vy); snake.head.y=H-R;}
+
+  // P1 paddle (left)
+  if(snake.vx<0 && x-R<=p1.x+PAD_W && x-R>=p1.x-2 &&
+     y>=p1.y-R && y<=p1.y+PAD_H+R) {
+    snake.head.x=p1.x+PAD_W+R;
+    deflect(p1, 1);
+    sparks(snake.head.x,snake.head.y,'#f97316');
+  }
+  // P2 paddle (right)
+  if(snake.vx>0 && x+R>=p2.x && x+R<=p2.x+PAD_W+2 &&
+     y>=p2.y-R && y<=p2.y+PAD_H+R) {
+    snake.head.x=p2.x-R;
+    deflect(p2,-1);
+    sparks(snake.head.x,snake.head.y,'#38bdf8');
+  }
+
+  // Score
+  if(snake.head.x<-20) { score.p2++; scoreFlash(2); checkWin()||resetSnake(2); }
+  if(snake.head.x>W+20){ score.p1++; scoreFlash(1); checkWin()||resetSnake(1); }
+
+  // Fruits
+  fruits.forEach((f,i)=>{
+    f.pulse+=0.06;
+    if(Math.hypot(x-f.x,y-f.y)<R+f.r) {
+      snake.maxLen+=8;
+      snake.speed=Math.min(snake.speed*1.03,11);
+      const spd=snake.speed;
+      const mag=Math.hypot(snake.vx,snake.vy);
+      snake.vx=snake.vx/mag*spd;
+      snake.vy=snake.vy/mag*spd;
+      fruitEatEffect(f.x,f.y,f.fill);
+      fruits[i]=spawnFruit();
+    }
+  });
+}
+
+function deflect(pad,dir) {
+  const rel=(snake.head.y-(pad.y+PAD_H/2))/(PAD_H/2);
+  const angle=rel*62*(Math.PI/180);
+  snake.vx=Math.cos(angle)*snake.speed*dir;
+  snake.vy=Math.sin(angle)*snake.speed;
+  snake.hit=8;
+}
+
+function resetSnake(towards) {
+  snake=initSnake(towards);
+  // Shrink snake a bit but keep some length
+  snake.maxLen=Math.max(SNAKE_BASE_LEN, Math.floor(snake.maxLen*0.6));
+}
+
+let flashTimer={p1:0,p2:0};
+function scoreFlash(p) { flashTimer['p'+p]=30; }
+
+function checkWin() {
+  if(score.p1>=WIN||score.p2>=WIN) {
+    running=false;
+    const w=score.p1>=WIN?1:2;
+    document.getElementById('ovTitle').textContent=`🏆 Spieler ${w} gewinnt!`;
+    document.getElementById('ovTitle').className='ov-title '+(w===1?'p1win':'p2win');
+    document.getElementById('ovSub').innerHTML=
+      `${score.p1} : ${score.p2}<br>Schlangenlänge: ${Math.floor(snake.maxLen/4)} 🐍`;
+    document.getElementById('modeBtns').style.display='none';
+    document.getElementById('rematchBtn').style.display='block';
+    document.getElementById('overlay').classList.remove('hidden');
+    return true;
+  }
+  return false;
+}
+
+// ── Draw ──
+function draw() {
+  // Background
+  ctx.fillStyle='#060612'; ctx.fillRect(0,0,W,H);
+
+  // Field grid
+  ctx.strokeStyle='rgba(255,255,255,0.03)'; ctx.lineWidth=1;
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  // Center dashed line
+  ctx.setLineDash([10,10]); ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(W/2,0); ctx.lineTo(W/2,H); ctx.stroke();
+  ctx.setLineDash([]);
+
+  if(!snake) return;
+
+  // Scores
+  ctx.textAlign='center'; ctx.font='bold 56px monospace';
+  const p1flash=flashTimer.p1>0;
+  const p2flash=flashTimer.p2>0;
+  ctx.fillStyle=p1flash?'#fff':'rgba(249,115,22,0.8)';
+  ctx.shadowColor=p1flash?'#fff':'#f97316'; ctx.shadowBlur=p1flash?30:16;
+  ctx.fillText(score.p1,W/2-80,66);
+  ctx.fillStyle=p2flash?'#fff':'rgba(56,189,248,0.8)';
+  ctx.shadowColor=p2flash?'#fff':'#38bdf8'; ctx.shadowBlur=p2flash?30:16;
+  ctx.fillText(score.p2,W/2+80,66);
+  ctx.shadowBlur=0;
+  if(flashTimer.p1>0) flashTimer.p1--;
+  if(flashTimer.p2>0) flashTimer.p2--;
+
+  // Fruits
+  fruits.forEach(f=>drawFruit(f));
+
+  // Snake body
+  const body=snake.body;
+  const total=body.length;
+  for(let i=total-1;i>=0;i--) {
+    const t=1-i/total;
+    const r=Math.max(2,(6+t*3));
+    const alpha=t*0.8;
+    // Color cycles through rainbow along body
+    const hue=(i/total)*280+120;
+    ctx.fillStyle=`hsla(${hue},90%,55%,${alpha})`;
+    ctx.beginPath(); ctx.arc(body[i].x,body[i].y,r,0,Math.PI*2); ctx.fill();
+  }
+
+  // Snake head
+  const hx=snake.head.x, hy=snake.head.y;
+  const ang=Math.atan2(snake.vy,snake.vx);
+  const glowR=snake.hit>0?24:14;
+  const glowCol=snake.hit>0?'#fff':'#4ade80';
+
+  // Head glow
+  ctx.shadowColor=glowCol; ctx.shadowBlur=glowR;
+  ctx.fillStyle='#4ade80';
+  ctx.beginPath(); ctx.arc(hx,hy,10,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+
+  // Head gradient
+  const hg=ctx.createRadialGradient(hx-3,hy-3,1,hx,hy,10);
+  hg.addColorStop(0,'#a7f3d0'); hg.addColorStop(1,'#059669');
+  ctx.fillStyle=hg;
+  ctx.beginPath(); ctx.arc(hx,hy,10,0,Math.PI*2); ctx.fill();
+
+  // Eyes
+  const ex=hx+Math.cos(ang)*5, ey=hy+Math.sin(ang)*5;
+  const px=Math.cos(ang+Math.PI/2)*4, py=Math.sin(ang+Math.PI/2)*4;
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(ex+px,ey+py,2.8,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex-px,ey-py,2.8,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#111';
+  ctx.beginPath(); ctx.arc(ex+px+Math.cos(ang)*0.5,ey+py+Math.sin(ang)*0.5,1.4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(ex-px+Math.cos(ang)*0.5,ey-py+Math.sin(ang)*0.5,1.4,0,Math.PI*2); ctx.fill();
+
+  // Tongue
+  const tx=hx+Math.cos(ang)*14, ty=hy+Math.sin(ang)*14;
+  ctx.strokeStyle='#f43f5e'; ctx.lineWidth=1.5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(hx+Math.cos(ang)*10,hy+Math.sin(ang)*10); ctx.lineTo(tx,ty); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx+Math.cos(ang+0.5)*5,ty+Math.sin(ang+0.5)*5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx+Math.cos(ang-0.5)*5,ty+Math.sin(ang-0.5)*5); ctx.stroke();
+
+  // Snake length indicator
+  const snakeLen=Math.floor(snake.maxLen/4);
+  ctx.textAlign='center'; ctx.font='bold 11px Segoe UI';
+  ctx.fillStyle='rgba(74,222,128,0.5)';
+  ctx.fillText(`🐍 ${snakeLen}`, W/2, 88);
+
+  // Paddles
+  drawPad(p1,'#f97316','rgba(249,115,22,0.5)');
+  drawPad(p2,'#38bdf8','rgba(56,189,248,0.5)');
+}
+
+function drawFruit(f) {
+  const pulse=Math.sin(f.pulse)*3;
+  ctx.shadowColor=f.glow; ctx.shadowBlur=16+pulse;
+  // Main fruit circle
+  ctx.fillStyle=f.fill;
+  ctx.beginPath(); ctx.arc(f.x,f.y,f.r+pulse*0.3,0,Math.PI*2); ctx.fill();
+  // Shine
+  ctx.fillStyle='rgba(255,255,255,0.35)';
+  ctx.beginPath(); ctx.arc(f.x-3,f.y-3,f.r*0.4,0,Math.PI*2); ctx.fill();
+  // Leaf
+  ctx.fillStyle=f.leaf;
+  ctx.beginPath(); ctx.ellipse(f.x+2,f.y-f.r-3,4,7,0.5,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+}
+
+function drawPad(pad,color,glow) {
+  ctx.shadowColor=color; ctx.shadowBlur=18;
+  const g=ctx.createLinearGradient(pad.x,pad.y,pad.x+PAD_W,pad.y);
+  g.addColorStop(0,color); g.addColorStop(1,color+'88');
+  ctx.fillStyle=g;
+  roundRect(pad.x,pad.y,PAD_W,PAD_H,7); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='rgba(255,255,255,0.2)';
+  roundRect(pad.x+2,pad.y+4,PAD_W/2-2,PAD_H-8,5); ctx.fill();
+}
+
+function roundRect(x,y,w,h,r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r); ctx.closePath();
+}
+
+// ── Effects ──
+function sparks(bx,by,color) {
+  const rect=cv.getBoundingClientRect();
+  const sx=rect.left+bx*(rect.width/W), sy=rect.top+by*(rect.height/H);
+  const fx=['✦','·','★','✧'];
+  for(let i=0;i<10;i++) {
+    const el=document.createElement('div'); el.className='spark';
+    el.textContent=fx[Math.floor(Math.random()*fx.length)];
+    el.style.color=color;
+    const a=Math.random()*2*Math.PI, d=30+Math.random()*80;
+    el.style.setProperty('--dx',`${Math.cos(a)*d}px`);
+    el.style.setProperty('--dy',`${Math.sin(a)*d}px`);
+    el.style.setProperty('--r',`${Math.random()*360}deg`);
+    el.style.left=sx+'px'; el.style.top=sy+'px';
+    el.style.animationDelay=`${Math.random()*0.1}s`;
+    document.body.appendChild(el);
+    setTimeout(()=>el.remove(),1000);
+  }
+}
+
+function fruitEatEffect(fx,fy,color) {
+  const rect=cv.getBoundingClientRect();
+  const sx=rect.left+fx*(rect.width/W), sy=rect.top+fy*(rect.height/H);
+  const fx2=['🍎','🍊','🍇','🌟','✨','💥'];
+  for(let i=0;i<12;i++) {
+    const el=document.createElement('div'); el.className='spark';
+    el.textContent=fx2[Math.floor(Math.random()*fx2.length)];
+    const a=Math.random()*2*Math.PI, d=40+Math.random()*100;
+    el.style.setProperty('--dx',`${Math.cos(a)*d}px`);
+    el.style.setProperty('--dy',`${Math.sin(a)*d}px`);
+    el.style.setProperty('--r',`${Math.random()*360}deg`);
+    el.style.left=sx+'px'; el.style.top=sy+'px';
+    el.style.animationDelay=`${Math.random()*0.15}s`;
+    document.body.appendChild(el);
+    setTimeout(()=>el.remove(),1100);
+  }
+}
+
+// ── Main loop ──
+function loop() {
+  requestAnimationFrame(loop);
+  if(running) update();
+  draw();
+}
+
+draw();
+loop();
+</script>
+</body>
+</html>
