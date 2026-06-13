@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Randys Fußball-Quiz ⚽</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #1a6b2f 0%, #2d9e50 50%, #1a6b2f 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .card {
+      background: white;
+      border-radius: 20px;
+      padding: 2rem;
+      max-width: 600px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      text-align: center;
+    }
+
+    .trophy { font-size: 3rem; margin-bottom: 0.5rem; }
+
+    h1 {
+      font-size: 1.8rem;
+      color: #1a6b2f;
+      margin-bottom: 0.3rem;
+    }
+
+    .subtitle {
+      color: #888;
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .progress-bar {
+      background: #e8f5e9;
+      border-radius: 10px;
+      height: 10px;
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    .progress-fill {
+      background: linear-gradient(90deg, #2d9e50, #4caf50);
+      height: 100%;
+      border-radius: 10px;
+      transition: width 0.4s ease;
+    }
+
+    .question-counter {
+      color: #888;
+      font-size: 0.85rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .question {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #1a1a1a;
+      margin-bottom: 1.5rem;
+      line-height: 1.4;
+    }
+
+    .answers {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .answer-btn {
+      background: #f0f7f1;
+      border: 2px solid #c8e6c9;
+      border-radius: 12px;
+      padding: 0.9rem 0.7rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1a6b2f;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .answer-btn:hover:not(:disabled) {
+      background: #e8f5e9;
+      border-color: #2d9e50;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(45,158,80,0.2);
+    }
+
+    .answer-btn.correct {
+      background: #2d9e50;
+      border-color: #2d9e50;
+      color: white;
+    }
+
+    .answer-btn.wrong {
+      background: #e53935;
+      border-color: #e53935;
+      color: white;
+    }
+
+    .answer-btn:disabled { cursor: default; transform: none; }
+
+    .feedback {
+      min-height: 2.5rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+    }
+    .feedback.correct { color: #2d9e50; }
+    .feedback.wrong   { color: #e53935; }
+
+    .score-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.9rem;
+      color: #555;
+    }
+    .score-badge {
+      background: #e8f5e9;
+      color: #1a6b2f;
+      border-radius: 20px;
+      padding: 0.3rem 0.9rem;
+      font-weight: 700;
+    }
+
+    .result { display: none; }
+    .result.show { display: block; }
+    .result-emoji { font-size: 4rem; margin-bottom: 0.5rem; }
+    .result-title { font-size: 1.6rem; font-weight: 800; color: #1a6b2f; margin-bottom: 0.5rem; }
+    .result-score { font-size: 2.5rem; font-weight: 900; color: #2d9e50; margin: 0.5rem 0; }
+    .result-msg { color: #555; margin-bottom: 1.5rem; }
+
+    .btn-restart {
+      background: linear-gradient(135deg, #2d9e50, #4caf50);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 0.9rem 2rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .btn-restart:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(45,158,80,0.4);
+    }
+
+    .quiz.hidden { display: none; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="trophy">⚽</div>
+  <h1>Randys Fußball-Quiz</h1>
+  <p class="subtitle">Bist du ein echter Fußball-Experte?</p>
+
+  <div class="quiz" id="quiz">
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+    <div class="question-counter" id="questionCounter">Frage 1 / 10</div>
+    <div class="question" id="question"></div>
+    <div class="answers" id="answers"></div>
+    <div class="feedback" id="feedback"></div>
+    <div class="score-row">
+      <span>Punkte:</span>
+      <span class="score-badge" id="scoreDisplay">0</span>
+    </div>
+  </div>
+
+  <div class="result" id="result">
+    <div class="result-emoji" id="resultEmoji">🏆</div>
+    <div class="result-title" id="resultTitle">Super gemacht!</div>
+    <div class="result-score" id="resultScore">10 / 10</div>
+    <div class="result-msg" id="resultMsg">Du bist ein echter Fußball-Profi!</div>
+    <button class="btn-restart" onclick="startQuiz()">🔄 Nochmal spielen</button>
+  </div>
+</div>
+
+<script>
+const questions = [
+  {
+    q: "Welches Land hat die meisten Fußball-Weltmeisterschaften gewonnen?",
+    answers: ["Deutschland", "Brasilien", "Italien", "Argentinien"],
+    correct: 1
+  },
+  {
+    q: "In welcher Stadt steht das Wembley-Stadion?",
+    answers: ["Manchester", "Liverpool", "London", "Birmingham"],
+    correct: 2
+  },
+  {
+    q: "Wie viele Spieler hat eine Fußballmannschaft auf dem Platz?",
+    answers: ["9", "10", "11", "12"],
+    correct: 2
+  },
+  {
+    q: "Welcher Verein hat die meisten UEFA Champions League Titel gewonnen?",
+    answers: ["FC Barcelona", "Bayern München", "Real Madrid", "AC Mailand"],
+    correct: 2
+  },
+  {
+    q: "Wie lange dauert ein normales Fußballspiel?",
+    answers: ["80 Minuten", "90 Minuten", "100 Minuten", "120 Minuten"],
+    correct: 1
+  },
+  {
+    q: "Welches Land ist Gastgeber der Fußball-WM 2026?",
+    answers: ["Katar", "USA, Kanada & Mexiko", "Deutschland", "Brasilien"],
+    correct: 1
+  },
+  {
+    q: "Was bedeutet \"Elfmeter\"?",
+    answers: ["Ein Tor aus 11 Metern", "Ein Schuss von der 11-Meter-Linie", "Eine rote Karte", "11 Freistöße"],
+    correct: 1
+  },
+  {
+    q: "Welcher Spieler ist als \"CR7\" bekannt?",
+    answers: ["Ronaldinho", "Robben", "Cristiano Ronaldo", "Neymar"],
+    correct: 2
+  },
+  {
+    q: "Wie nennt man die Linie am Ende des Feldes, hinter der das Tor steht?",
+    answers: ["Seitenlinie", "Mittellinie", "Torlinie", "Strafraumlinie"],
+    correct: 2
+  },
+  {
+    q: "Was bekommt ein Spieler nach zwei gelben Karten?",
+    answers: ["Nichts", "Freistoß für den Gegner", "Rote Karte", "Elfmeter"],
+    correct: 2
+  }
+];
+
+let currentQ = 0;
+let score = 0;
+let answered = false;
+
+function startQuiz() {
+  currentQ = 0;
+  score = 0;
+  answered = false;
+  document.getElementById('result').classList.remove('show');
+  document.getElementById('quiz').classList.remove('hidden');
+  document.getElementById('scoreDisplay').textContent = '0';
+  showQuestion();
+}
+
+function showQuestion() {
+  const q = questions[currentQ];
+  answered = false;
+
+  document.getElementById('questionCounter').textContent =
+    `Frage ${currentQ + 1} / ${questions.length}`;
+  document.getElementById('progressFill').style.width =
+    `${(currentQ / questions.length) * 100}%`;
+  document.getElementById('question').textContent = q.q;
+  document.getElementById('feedback').textContent = '';
+  document.getElementById('feedback').className = 'feedback';
+
+  const container = document.getElementById('answers');
+  container.innerHTML = '';
+  q.answers.forEach((a, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'answer-btn';
+    btn.textContent = a;
+    btn.onclick = () => handleAnswer(i, btn);
+    container.appendChild(btn);
+  });
+}
+
+function handleAnswer(index, btn) {
+  if (answered) return;
+  answered = true;
+
+  const q = questions[currentQ];
+  const allBtns = document.querySelectorAll('.answer-btn');
+  allBtns.forEach(b => b.disabled = true);
+  allBtns[q.correct].classList.add('correct');
+
+  const feedback = document.getElementById('feedback');
+
+  if (index === q.correct) {
+    score++;
+    btn.classList.add('correct');
+    feedback.textContent = '✅ Richtig! Super!';
+    feedback.className = 'feedback correct';
+  } else {
+    btn.classList.add('wrong');
+    feedback.textContent = '❌ Leider falsch!';
+    feedback.className = 'feedback wrong';
+  }
+
+  document.getElementById('scoreDisplay').textContent = score;
+
+  setTimeout(() => {
+    currentQ++;
+    if (currentQ < questions.length) {
+      showQuestion();
+    } else {
+      showResult();
+    }
+  }, 1400);
+}
+
+function showResult() {
+  document.getElementById('quiz').classList.add('hidden');
+  const result = document.getElementById('result');
+  result.classList.add('show');
+
+  document.getElementById('resultScore').textContent = `${score} / ${questions.length}`;
+
+  let emoji, title, msg;
+  if (score === 10) {
+    emoji = '🏆'; title = 'PERFEKT!';
+    msg = 'Du bist ein echter Fußball-Weltmeister! Unglaublich!';
+  } else if (score >= 8) {
+    emoji = '⭐'; title = 'Fantastisch!';
+    msg = 'Fast perfekt – du kennst dich richtig gut aus!';
+  } else if (score >= 6) {
+    emoji = '👍'; title = 'Gut gemacht!';
+    msg = 'Solides Fußball-Wissen! Mit etwas Übung schaffst du 10/10!';
+  } else if (score >= 4) {
+    emoji = '⚽'; title = 'Nicht schlecht!';
+    msg = 'Du weißt schon einiges über Fußball. Nochmal versuchen?';
+  } else {
+    emoji = '📚'; title = 'Weitermachen!';
+    msg = 'Schau dir mehr Fußballspiele an und versuche es nochmal!';
+  }
+
+  document.getElementById('resultEmoji').textContent = emoji;
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultMsg').textContent = msg;
+}
+
+startQuiz();
+</script>
+</body>
+</html>
