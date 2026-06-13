@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Randy's Fallout Terminal 💻</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:#020802;min-height:100vh;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-family:'Segoe UI',sans-serif;
+    color:#4ade80;gap:.4rem;padding:.4rem;user-select:none}
+  h1{font-size:clamp(1rem,3.5vw,1.4rem);font-weight:900;color:#4ade80;
+    text-shadow:0 0 12px #22c55e}
+  canvas{border:1px solid #166534;border-radius:4px;
+    box-shadow:0 0 40px rgba(74,222,128,.18),inset 0 0 60px rgba(0,0,0,.5);display:block;cursor:default}
+  .hint{font-size:.62rem;color:#14532d;letter-spacing:.06em;font-family:monospace}
+</style>
+</head>
+<body>
+<h1>💻 Randy's ROBCO Terminal</h1>
+<canvas id="c"></canvas>
+<div class="hint">Klicke auf ein WORT zum Raten &nbsp;·&nbsp; Klicke auf [KLAMMERN] für Bonus-Aktionen</div>
+<script>
+// ════════════════════════════════════════════
+//  ROBCO INDUSTRIES TERMLINK PROTOCOL
+//  Fallout-style Hacking Minigame
+// ════════════════════════════════════════════
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+const W=720, H=500;
+cv.width=W; cv.height=H;
+
+// ── Font + Grid constants ────────────────────
+const FONT='13px "Courier New",Courier,monospace';
+ctx.font=FONT;
+const CW=ctx.measureText('M').width;  // ~7.8px
+const CH=20;   // row height
+const ROWS=16, COLS=24, WLEN=5, NUM_WORDS=6;
+
+// Layout
+const UI_H=64;        // top UI bar
+const STAT_H=76;      // bottom status area
+const GRID_TOP=UI_H+4;
+const HEX_CHARS=7;    // "0xXXXX "
+const COL_W=COLS*CW;
+const HEX_W=HEX_CHARS*CW;
+const COL_GAP=24;
+const TOTAL_W=HEX_W+COL_W+COL_GAP+HEX_W+COL_W;
+const L_HEX=(W-TOTAL_W)/2;     // left hex addr x
+const L_CONT=L_HEX+HEX_W;      // left content x
+const R_HEX=L_CONT+COL_W+COL_GAP; // right hex addr x
+const R_CONT=R_HEX+HEX_W;      // right content x
+
+// ── Colors ──────────────────────────────────
+const G={
+  bg:   '#020802',
+  dim:  '#166534',
+  med:  '#16a34a',
+  norm: '#4ade80',
+  bright:'#86efac',
+  glow: '#bbf7d0',
+  addr: '#15803d',
+  yel:  '#fde047',
+  red:  '#f87171',
+  scan: 'rgba(0,0,0,.06)',
+};
+
+// ── Word pool (all 5 letters, Fallout-themed) ─
+const POOL=[
+  'ALPHA','BRAVO','DELTA','EARTH','FLAME','GRANT','HEART',
+  'INNER','JOINT','LIGHT','MONEY','NIGHT','OCEAN','PLANT',
+  'QUEEN','RIVER','STONE','TOWER','UNDER','VOICE','WATER',
+  'BLANK','CLIMB','DRAFT','EXTRA','FIGHT','GHOST','HAPPY',
+  'INDEX','JUDGE','KNIFE','LASER','MATCH','NERVE','OXIDE',
+  'PEACE','QUEST','RADAR','SHELF','TRAIN','ULTRA','VALVE',
+  'WRONG','YOUNG','STEEL','POWER','VAULT','WASTE','BLOOD',
+  'FLESH','SPAWN','DEATH','WRATH','GUARD','DRONE','CLONE',
+  'MELEE','SNEAK','CRIT','PERK','NUKE','RUST','TANK',
+  'ROGUE','TOXIC','MICRO','PULSE','SHARD','GRIND','FERAL',
+];
+// Only keep 5-letter words
+const WORDS5=POOL.filter(w=>w.length===WLEN);
+
+const SYMS='@#$%^&*!?/-+=|;.,`~><\\/\'!_';
+const BRACKS=[['(',')'],['[',']'],['{','}'],['<','>']];
+
+// ── State ───────────────────────────────────
+let grid=[],words=[],password='';
+let attempts=4, scene='menu';
+let hovW=-1, hovB=-1;  // hovered word/bracket index
+let bracketPairs=[];
+let log=[];  // status log lines
+let frameT=0;
+
+// ── Helpers ─────────────────────────────────
+function shuffle(a){return [...a].sort(()=>Math.random()-.5);}
+function rnd(n){return Math.floor(Math.random()*n);}
+function hexAddr(row,side){
+  const addr=0xF742+(side*ROWS+row)*12;
+  return'0x'+addr.toString(16).toUpperCase().padStart(4,'0');
+}
+function likeness(a,b){let n=0;for(let i=0;i<a.length;i++)if(a[i]===b[i])n++;return n;}
+
+// ── Init game ───────────────────────────────
+function initGame(){
+  const pool=shuffle(WORDS5);
+  const selected=pool.slice(0,NUM_WORDS);
+  password=selected[rnd(NUM_WORDS)];
+  words=selected.map(w=>({word:w,removed:false,pos:-1}));
+
+  const total=ROWS*COLS*2;
+  grid=Array.from({length:total},()=>SYMS[rnd(SYMS.length)]);
+
+  const used=new Set();
+
+  // Place words (no cross-row)
+  words.forEach(wobj=>{
+    let ok=false,t=0;
+    while(!ok&&t++<300){
+      const side=rnd(2), row=rnd(ROWS), col=rnd(COLS-WLEN+1);
+      const base=side*ROWS*COLS+row*COLS+col;
+      const idxs=[...Array(WLEN)].map((_,k)=>base+k);
+      if(idxs.every(i=>!used.has(i))){
+        idxs.forEach((i,k)=>{grid[i]=wobj.word[k];used.add(i);});
+        wobj.pos=base;
+        ok=true;
+      }
+    }
+  });
+
+  // Place bracket pairs in symbol areas
+  bracketPairs=[];
+  const bTypes=shuffle(BRACKS);
+  for(let b=0;b<4;b++){
+    let ok=false,t=0;
+    while(!ok&&t++<300){
+      const side=rnd(2), row=rnd(ROWS);
+      const inner=rnd(3)+1, total=inner+2;
+      if(total>COLS)continue;
+      const col=rnd(COLS-total+1);
+      const base=side*ROWS*COLS+row*COLS+col;
+      const idxs=[...Array(total)].map((_,k)=>base+k);
+      if(idxs.every(i=>!used.has(i))){
+        const bt=bTypes[b%bTypes.length];
+        idxs.forEach(i=>used.add(i));
+        grid[base]=bt[0];
+        for(let k=1;k<=inner;k++)grid[base+k]=SYMS[rnd(SYMS.length)];
+        grid[base+inner+1]=bt[1];
+        bracketPairs.push({start:base,end:base+inner+1,used:false});
+        ok=true;
+      }
+    }
+  }
+
+  attempts=4; hovW=-1; hovB=-1;
+  log=[
+    'ROBCO INDUSTRIES TERMLINK PROTOCOL',
+    'ENTER PASSWORD NOW',
+    '____________________________',
+  ];
+}
+
+// ── Hit detection ────────────────────────────
+function flatIdx(mx,my){
+  const row=Math.floor((my-GRID_TOP)/CH);
+  if(row<0||row>=ROWS)return -1;
+  const lx=mx-L_CONT;
+  if(lx>=0&&lx<COLS*CW){
+    const col=Math.floor(lx/CW);
+    if(col>=0&&col<COLS)return row*COLS+col;
+  }
+  const rx=mx-R_CONT;
+  if(rx>=0&&rx<COLS*CW){
+    const col=Math.floor(rx/CW);
+    if(col>=0&&col<COLS)return ROWS*COLS+row*COLS+col;
+  }
+  return -1;
+}
+
+function wordAt(idx){
+  if(idx<0)return -1;
+  return words.findIndex(w=>!w.removed&&w.pos>=0&&idx>=w.pos&&idx<w.pos+WLEN);
+}
+
+function bracketAt(idx){
+  if(idx<0)return -1;
+  return bracketPairs.findIndex(b=>!b.used&&idx>=b.start&&idx<=b.end);
+}
+
+// ── Actions ─────────────────────────────────
+function guess(wi){
+  if(scene!=='game')return;
+  const w=words[wi];
+  if(w.removed)return;
+  const lik=likeness(w.word,password);
+  if(lik===WLEN){
+    log.push('>'+w.word);
+    log.push('>!!!! EXACT MATCH !!!!');
+    log.push('>TERMINAL UNLOCKED!');
+    scene='win'; return;
+  }
+  attempts--;
+  log.push('>'+w.word);
+  log.push('>ENTRY DENIED');
+  log.push('>LIKENESS='+lik+'/'+WLEN);
+  if(attempts<=0){log.push('>!TERMINAL LOCKED!');scene='locked';}
+}
+
+function useBracket(bi){
+  if(scene!=='game')return;
+  const bp=bracketPairs[bi];
+  if(bp.used)return;
+  bp.used=true;
+  const duds=words.filter(w=>!w.removed&&w.word!==password);
+  if(duds.length>0&&Math.random()<.65){
+    const t=duds[rnd(duds.length)];
+    t.removed=true;
+    log.push('>DUPE REMOVED');
+    log.push('>'+t.word+' ELIMINATED');
+  }else{
+    attempts=4;
+    log.push('>ALLOWANCE REPLENISHED');
+    log.push('>4 ATTEMPTS RESTORED');
+  }
+}
+
+// ── Mouse events ─────────────────────────────
+cv.addEventListener('mousemove',e=>{
+  if(scene==='win'||scene==='locked'||scene==='menu'){cv.style.cursor='pointer';return;}
+  const r=cv.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width);
+  const my=(e.clientY-r.top)*(H/r.height);
+  const idx=flatIdx(mx,my);
+  hovW=wordAt(idx);
+  hovB=hovW>=0?-1:bracketAt(idx);
+  cv.style.cursor=(hovW>=0||hovB>=0)?'pointer':'default';
+});
+
+cv.addEventListener('click',e=>{
+  const r=cv.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width);
+  const my=(e.clientY-r.top)*(H/r.height);
+  if(scene==='menu'){initGame();scene='game';return;}
+  if(scene==='win'||scene==='locked'){scene='menu';return;}
+  const idx=flatIdx(mx,my);
+  const wi=wordAt(idx);
+  if(wi>=0){guess(wi);return;}
+  const bi=bracketAt(idx);
+  if(bi>=0)useBracket(bi);
+});
+
+// ── Draw helpers ─────────────────────────────
+function charColor(idx){
+  // Removed word → greyed out
+  const rw=words.find(w=>w.removed&&w.pos>=0&&idx>=w.pos&&idx<w.pos+WLEN);
+  if(rw)return G.dim;
+  // Part of a word
+  const wi=words.findIndex(w=>!w.removed&&w.pos>=0&&idx>=w.pos&&idx<w.pos+WLEN);
+  if(wi>=0)return wi===hovW?G.glow:G.norm;
+  // Part of a bracket pair
+  const bi=bracketPairs.findIndex(b=>!b.used&&idx>=b.start&&idx<=b.end);
+  if(bi>=0)return bi===hovB?G.yel:G.med;
+  // Noise
+  return G.dim;
+}
+
+function drawScanlines(){
+  ctx.fillStyle=G.scan;
+  for(let y=0;y<H;y+=2)ctx.fillRect(0,y,W,1);
+}
+
+function drawTopBar(){
+  // Title / header
+  ctx.fillStyle=G.bright; ctx.font='bold 14px "Courier New",monospace'; ctx.textAlign='left';
+  ctx.fillText('ROBCO INDUSTRIES (TM) TERMLINK PROTOCOL',L_HEX,22);
+  ctx.fillStyle=G.med; ctx.font=FONT;
+  ctx.fillText('ENTER PASSWORD NOW',L_HEX,40);
+
+  // Attempts bar
+  ctx.fillStyle=G.norm; ctx.textAlign='right';
+  ctx.fillText('ATTEMPT(S) LEFT:',W-120,40);
+  for(let i=0;i<4;i++){
+    ctx.fillStyle=i<attempts?G.bright:G.dim;
+    ctx.font='bold 16px "Courier New",monospace';
+    ctx.fillText('◆',W-85+i*20,42);
+  }
+  ctx.font=FONT;
+
+  // Separator line
+  ctx.fillStyle=G.dim; ctx.fillRect(L_HEX,UI_H-2,W-L_HEX*2,1);
+}
+
+function drawGrid(){
+  ctx.font=FONT; ctx.textAlign='left';
+
+  for(let side=0;side<2;side++){
+    const hexX=side===0?L_HEX:R_HEX;
+    const contX=side===0?L_CONT:R_CONT;
+
+    for(let row=0;row<ROWS;row++){
+      const y=GRID_TOP+row*CH+CH-4;
+
+      // Hex address
+      ctx.fillStyle=G.addr;
+      ctx.fillText(hexAddr(row,side),hexX,y);
+
+      // Content characters
+      for(let col=0;col<COLS;col++){
+        const idx=side*ROWS*COLS+row*COLS+col;
+        ctx.fillStyle=charColor(idx);
+        ctx.fillText(grid[idx]||'.',contX+col*CW,y);
+      }
+    }
+  }
+
+  // Removed words: draw strikethrough overlay
+  words.filter(w=>w.removed&&w.pos>=0).forEach(w=>{
+    const side=w.pos>=ROWS*COLS?1:0;
+    const localIdx=w.pos-side*ROWS*COLS;
+    const row=Math.floor(localIdx/COLS);
+    const col=localIdx%COLS;
+    const contX=side===0?L_CONT:R_CONT;
+    const y=GRID_TOP+row*CH+CH-4;
+    ctx.fillStyle=G.dim;
+    for(let k=0;k<WLEN;k++)ctx.fillText('.',contX+(col+k)*CW,y);
+  });
+}
+
+function drawStatus(){
+  const sy=GRID_TOP+ROWS*CH+6;
+  ctx.fillStyle=G.dim; ctx.fillRect(L_HEX,sy,W-L_HEX*2,1);
+  ctx.font=FONT; ctx.textAlign='left';
+  const lines=log.slice(-5);
+  lines.forEach((line,i)=>{
+    ctx.fillStyle=i===lines.length-1?G.bright:G.med;
+    ctx.fillText(line,L_HEX,sy+14+i*14);
+  });
+  // Blinking cursor on last line
+  if(Math.floor(frameT/25)%2===0&&scene==='game'){
+    const last=lines[lines.length-1]||'';
+    ctx.fillStyle=G.bright;
+    ctx.fillText('_',L_HEX+last.length*CW,sy+14+(lines.length-1)*14);
+  }
+}
+
+function drawMenu(){
+  ctx.fillStyle=G.bg; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center'; ctx.font=FONT;
+
+  // Scanlines
+  drawScanlines();
+
+  // Blinking header
+  const blink=Math.floor(frameT/30)%2===0;
+  ctx.fillStyle=blink?G.bright:G.norm;
+  ctx.font='bold 14px "Courier New",monospace';
+  ctx.fillText('ROBCO INDUSTRIES (TM) TERMLINK PROTOCOL',W/2,60);
+
+  ctx.font=FONT; ctx.fillStyle=G.norm;
+  ctx.fillText('WELCOME, VAULT DWELLER',W/2,88);
+  ctx.fillStyle=G.med;
+  ctx.fillText('SECURITY LEVEL: MEDIUM  /  WORD LENGTH: 5',W/2,108);
+
+  // Grid preview (decorative)
+  ctx.fillStyle=G.dim;
+  const demoChars='@#$%^&*!?/-+=VAULT DWELLER ENTER PASSWORD NOW@#$%';
+  for(let i=0;i<8;i++){
+    ctx.fillText(demoChars.slice(i*6,(i+1)*6).padEnd(6,' ')+
+      ' '.repeat(2)+demoChars.slice((i+3)*3,(i+3)*3+8),W/2,138+i*16);
+  }
+
+  // Instruction box
+  ctx.strokeStyle=G.dim; ctx.lineWidth=1;
+  ctx.strokeRect(W/2-230,270,460,120);
+  ctx.fillStyle=G.norm; ctx.font='bold 13px "Courier New",monospace';
+  ctx.fillText('SO SPIELST DU:',W/2,296);
+  ctx.font=FONT; ctx.fillStyle=G.med;
+  ctx.fillText('> Klicke auf ein WORT um es als Passwort zu raten',W/2,316);
+  ctx.fillText('> LIKENESS zeigt: wie viele Buchstaben stimmen?',W/2,332);
+  ctx.fillText('> [KLAMMERN] geben Bonus-Aktionen (Dud entfernen)',W/2,348);
+  ctx.fillText('> Du hast 4 Versuche — kein Fehler zu viel!',W/2,364);
+
+  // Start prompt
+  const pulse=Math.sin(frameT*.06)*.3+.7;
+  ctx.fillStyle=`rgba(134,239,172,${pulse})`;
+  ctx.font='bold 14px "Courier New",monospace';
+  ctx.fillText('[ KLICKE UM ZU STARTEN ]',W/2,420);
+  ctx.font=FONT;
+}
+
+function drawOverlay(txt,col,sub){
+  ctx.fillStyle='rgba(2,8,2,.9)'; ctx.fillRect(0,0,W,H);
+  drawScanlines();
+  const p=Math.sin(frameT*.08)*0.02;
+  ctx.save();ctx.translate(W/2,H/2-20);ctx.scale(1+p,1+p);
+  ctx.textAlign='center';
+  ctx.font='bold 28px "Courier New",monospace'; ctx.fillStyle=col;
+  ctx.shadowColor=col; ctx.shadowBlur=24;
+  ctx.fillText(txt,0,0); ctx.shadowBlur=0;
+  ctx.font=FONT; ctx.fillStyle=G.med;
+  ctx.fillText(sub,0,36);
+  ctx.fillStyle=G.dim;
+  ctx.fillText('[ KLICKE FUR NEUES SPIEL ]',0,80);
+  ctx.restore();
+}
+
+// ── Main loop ─────────────────────────────────
+function loop(){
+  requestAnimationFrame(loop);
+  frameT++;
+  ctx.fillStyle=G.bg; ctx.fillRect(0,0,W,H);
+
+  if(scene==='menu'){drawMenu();return;}
+
+  drawGrid();
+  drawTopBar();
+  drawStatus();
+  drawScanlines();
+
+  if(scene==='win')
+    drawOverlay('>>>> TERMINAL UNLOCKED <<<<',G.bright,'PASSWORT: '+password);
+  if(scene==='locked')
+    drawOverlay('!!! TERMINAL LOCKED !!!',G.red,'PASSWORT WAR: '+password);
+}
+
+// Start on menu
+loop();
+</script>
+</body>
+</html>
