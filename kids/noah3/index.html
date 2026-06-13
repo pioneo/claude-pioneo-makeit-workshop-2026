@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Noah3's Dackel-Rennen 🐕</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0a1a0a; min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #fff; gap: 0.4rem; padding: 0.4rem; user-select: none;
+    }
+    h1 {
+      font-size: clamp(1rem,3.5vw,1.5rem); font-weight: 900;
+      background: linear-gradient(135deg, #f59e0b, #ef4444, #f97316);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    canvas { border-radius: 10px; border: 2px solid rgba(245,158,11,0.4);
+      box-shadow: 0 0 40px rgba(245,158,11,0.1), 0 20px 60px rgba(0,0,0,0.8); display: block; }
+    .hint { font-size: 0.65rem; color: #3a3a1a; letter-spacing: 0.08em; }
+  </style>
+</head>
+<body>
+<h1>🐕 Noah3's Dackel-Rennen</h1>
+<canvas id="c"></canvas>
+<div class="hint">← → / A D = Schneller/Langsamer &nbsp;·&nbsp; ↑ / W / Leertaste = Springen (über Hürden)</div>
+<script>
+const W=700, H=420;
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+cv.width=W; cv.height=H;
+
+const RACE_LEN=4000; // world pixels
+const LANE_Y=[90, 185, 278, 370]; // 4 dog lanes (y center)
+const LANE_H=74;
+const GROUND_Y=LANE_Y.map(y=>y+18); // paw ground level
+
+const DOG_DEFS=[
+  { name:'Dackel',    col:'#8b4513', belly:'#c8956e', ear:'#5c2a00', nose:'#111', player:true },
+  { name:'Pudel',     col:'#d4d4d4', belly:'#f0f0f0', ear:'#bbb',    nose:'#222', player:false },
+  { name:'Mops',      col:'#c8a878', belly:'#e8c898', ear:'#a07040', nose:'#333', player:false },
+  { name:'Dalmatiner',col:'#f5f5f5', belly:'#fff',    ear:'#111',    nose:'#111', player:false, spots:true },
+];
+
+const BONE_COLOR='#f5deb3';
+const HURDLE_COLOR='#ef4444';
+
+let scene='menu', frameT=0;
+let camX=0, countdown=3, cdTimer=0;
+let dogs=[], hurdles=[], bones=[], particles=[];
+let finishOrder=[];
+
+function initRace(){
+  dogs=DOG_DEFS.map((def,i)=>({
+    ...def, i,
+    x:60, y:LANE_Y[i], gnd:GROUND_Y[i],
+    vy:0, onGround:true,
+    speed:0, maxSpeed:3.2+(i===0?0.3:Math.random()*0.4),
+    legAnim:0, panting:0, boostTimer:0,
+    finished:false, finishTime:0, place:0,
+    // AI timing variation
+    aiReact:Math.random()*0.4+0.6,
+  }));
+  // Randomize AI max speeds slightly
+  dogs.slice(1).forEach(d=>{ d.maxSpeed=2.8+Math.random()*0.7; });
+
+  hurdles=[]; bones=[];
+  // Place hurdles and bones in lanes
+  for(let lane=0;lane<4;lane++){
+    let wx=400;
+    while(wx<RACE_LEN-300){
+      if(Math.random()<0.55){
+        hurdles.push({ wx, lane, w:16, h:40, cleared:false });
+        wx+=200+Math.random()*250;
+      } else {
+        bones.push({ wx, lane, collected:false, anim:Math.random()*Math.PI*2 });
+        wx+=160+Math.random()*180;
+      }
+    }
+  }
+
+  particles=[]; finishOrder=[];
+  frameT=0; countdown=3; cdTimer=0; camX=0;
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  if([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup',e=>keys[e.key]=false);
+
+// ── UPDATE ──
+function update(){
+  frameT++;
+
+  // Countdown
+  if(countdown>0){
+    cdTimer++;
+    if(cdTimer>=60){ countdown--; cdTimer=0; }
+    // Still animate dogs breathing
+    dogs.forEach(d=>d.legAnim+=0.05);
+    return;
+  }
+
+  const pl=dogs[0];
+
+  // Player: hold RIGHT/D to accelerate, LEFT/A to slow, SPACE/UP to jump
+  if((keys['ArrowRight']||keys['d']||keys['D'])||true){
+    // Auto-run base speed; RIGHT = boost
+    pl.speed+=(keys['ArrowRight']||keys['d']||keys['D'])?0.15:0.04;
+  }
+  if(keys['ArrowLeft']||keys['a']||keys['A']) pl.speed-=0.12;
+  pl.speed=Math.max(0.3,Math.min(pl.maxSpeed+(pl.boostTimer>0?1.2:0),pl.speed));
+  pl.speed*=0.96; // friction
+
+  if((keys['ArrowUp']||keys['w']||keys['W']||keys[' '])&&pl.onGround){
+    pl.vy=-10; pl.onGround=false;
+  }
+  if(pl.boostTimer>0) pl.boostTimer--;
+
+  // AI dogs
+  dogs.slice(1).forEach(d=>{
+    if(d.finished) return;
+    // Check upcoming hurdle
+    const nextHurdle=hurdles.find(h=>h.lane===d.i&&!h.cleared&&h.wx>d.x&&h.wx<d.x+120);
+    if(nextHurdle&&d.onGround&&Math.random()<d.aiReact*0.08){
+      d.vy=-9.5; d.onGround=false;
+    }
+    // Collect bones
+    const bn=bones.find(b=>b.lane===d.i&&!b.collected&&b.wx>d.x&&b.wx<d.x+40);
+    if(bn){ bn.collected=true; d.boostTimer=50; }
+
+    d.speed+=0.06+Math.random()*0.02;
+    d.speed=Math.max(0.5,Math.min(d.maxSpeed+(d.boostTimer>0?0.8:0),d.speed));
+    d.speed*=0.96;
+    if(d.boostTimer>0) d.boostTimer--;
+  });
+
+  // Physics
+  dogs.forEach(d=>{
+    if(d.finished) return;
+    // Horizontal
+    d.x+=d.speed;
+    // Vertical (jump)
+    if(!d.onGround){ d.vy+=0.55; d.y+=d.vy; }
+    if(d.y>=d.gnd){ d.y=d.gnd; d.vy=0; d.onGround=true; }
+    d.legAnim+=d.speed*0.25;
+
+    // Hurdle collision
+    hurdles.forEach(h=>{
+      if(h.lane!==d.i||h.cleared) return;
+      const hsx=h.wx-camX;
+      const dogSx=d.x-camX;
+      if(dogSx+28>h.wx-camX&&dogSx<h.wx-camX+h.w){
+        if(d.onGround){ // hit hurdle, slow down
+          d.speed*=0.4;
+          spawnP(d.x-camX,d.y-20,'#ef4444',5);
+        } else if(d.y<d.gnd-20){ h.cleared=true; }
+      }
+    });
+
+    // Bone collect
+    if(d.player){
+      bones.forEach(b=>{
+        if(b.collected||b.lane!==0) return;
+        if(Math.abs(d.x-b.wx)<30&&Math.abs(d.y-d.gnd)<30){
+          b.collected=true; d.boostTimer=60;
+          spawnP(b.wx-camX,d.y-10,'#f59e0b',8);
+        }
+      });
+    }
+
+    // Finish
+    if(!d.finished&&d.x>=RACE_LEN){
+      d.finished=true; d.finishTime=frameT;
+      finishOrder.push(d);
+      d.place=finishOrder.length;
+      spawnP(W/2,d.y-10,'#fbbf24',16);
+    }
+  });
+
+  // Sort places for live display
+  const running=dogs.filter(d=>!d.finished);
+  running.sort((a,b)=>b.x-a.x);
+  running.forEach((d,i)=>d.place=finishOrder.length+i+1);
+
+  // Camera follows player
+  camX=Math.max(0,Math.min(RACE_LEN-W, pl.x-180));
+
+  // Particles
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.15;p.life--;});
+
+  // Race over?
+  if(finishOrder.length===dogs.length && scene==='game'){
+    setTimeout(()=>scene='finish',800);
+  }
+}
+
+function spawnP(x,y,col,n){
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2,s=2+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1,col,r:3+Math.random()*3,life:25+Math.random()*15});
+  }
+}
+
+// ── DRAW ──
+function drawBg(){
+  // Sky
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#87ceeb'); sky.addColorStop(1,'#d0f0ff');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
+
+  // Clouds
+  [[100,35,60],[300,20,45],[520,40,55],[650,25,40]].forEach(([cx,cy,r])=>{
+    const sx=(cx-(camX*0.18))%W;
+    ctx.fillStyle='rgba(255,255,255,0.92)';
+    ctx.beginPath(); ctx.arc(sx,cy,r,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx+r*0.55,cy-r*0.28,r*0.65,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx-r*0.42,cy-r*0.18,r*0.55,0,Math.PI*2); ctx.fill();
+  });
+
+  // Lane backgrounds
+  LANE_Y.forEach((ly,i)=>{
+    // Grass lane
+    ctx.fillStyle=i%2===0?'#5a9a30':'#4a8a22';
+    ctx.fillRect(0,ly-LANE_H/2,W,LANE_H);
+    // Ground line
+    ctx.fillStyle=i%2===0?'#3a7a18':'#2a6a0a';
+    ctx.fillRect(0,GROUND_Y[i],W,6);
+    // Lane divider
+    if(i<3){
+      ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=2; ctx.setLineDash([20,15]);
+      ctx.beginPath(); ctx.moveTo(0,ly+LANE_H/2); ctx.lineTo(W,ly+LANE_H/2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Background trees (parallax)
+    for(let t=0;t<4;t++){
+      const tx=((t*180+i*60)-(camX*0.25))%W;
+      ctx.fillStyle='#2d5a1a'; ctx.beginPath(); ctx.arc(tx,ly-LANE_H/2+10,16,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#3a7020'; ctx.beginPath(); ctx.arc(tx-6,ly-LANE_H/2+5,12,0,Math.PI*2); ctx.fill();
+    }
+  });
+
+  // Finish line
+  const finSx=RACE_LEN-camX;
+  if(finSx>0&&finSx<W+20){
+    for(let y=0;y<H;y+=14){
+      ctx.fillStyle=Math.floor(y/14)%2===0?'#fff':'#000';
+      ctx.fillRect(finSx-6,y,14,14);
+    }
+    ctx.fillStyle='#ef4444'; ctx.font='bold 14px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText('ZIEL 🏁',finSx,20);
+  }
+}
+
+function drawHurdles(){
+  hurdles.forEach(h=>{
+    if(h.cleared) return;
+    const sx=h.wx-camX;
+    if(sx<-20||sx>W+20) return;
+    const gy=GROUND_Y[h.lane];
+    // Post
+    ctx.fillStyle=HURDLE_COLOR;
+    ctx.fillRect(sx-4,gy-h.h,8,h.h);
+    ctx.fillRect(sx+8,gy-h.h,8,h.h);
+    // Bar
+    ctx.fillStyle='#fff'; ctx.fillRect(sx-4,gy-h.h+4,20,8);
+    ctx.fillStyle=HURDLE_COLOR; ctx.fillRect(sx-4,gy-h.h+4,20,4);
+  });
+}
+
+function drawBones(){
+  bones.forEach(b=>{
+    if(b.collected) return;
+    const sx=b.wx-camX;
+    if(sx<-20||sx>W+20) return;
+    const gy=GROUND_Y[b.lane];
+    const bob=Math.sin(frameT*0.07+b.anim)*4;
+    ctx.shadowColor='#f59e0b'; ctx.shadowBlur=10;
+    ctx.fillStyle=BONE_COLOR; ctx.font='18px serif'; ctx.textAlign='center';
+    ctx.fillText('🦴',sx,gy-8+bob);
+    ctx.shadowBlur=0;
+  });
+}
+
+// Dachshund - long body, short legs
+function drawDackel(d, sx){
+  const y=d.y, anim=d.legAnim, boost=d.boostTimer>0;
+  ctx.save();
+
+  // Shadow
+  ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(sx+18,y+5,28,5,0,0,Math.PI*2); ctx.fill();
+
+  // Boost fire
+  if(boost){
+    ctx.shadowColor='#f97316'; ctx.shadowBlur=12;
+    ctx.fillStyle='#f97316'; ctx.font='16px serif'; ctx.textAlign='center';
+    ctx.fillText('🔥',sx-16,y-4);
+    ctx.shadowBlur=0;
+  }
+
+  const col=d.col, belly=d.belly, ear=d.ear;
+
+  // DACHSHUND: very long body, short stubby legs
+  if(d.i===0){
+    // Body (long sausage)
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.ellipse(sx+14,y-14,32,11,0,0,Math.PI*2); ctx.fill();
+    // Belly stripe
+    ctx.fillStyle=belly;
+    ctx.beginPath(); ctx.ellipse(sx+12,y-11,20,6,0,0,Math.PI*2); ctx.fill();
+    // Head
+    ctx.fillStyle=col; ctx.beginPath(); ctx.ellipse(sx+42,y-18,13,11,0.3,0,Math.PI*2); ctx.fill();
+    // Snout
+    ctx.fillStyle=belly; ctx.beginPath(); ctx.ellipse(sx+52,y-16,8,6,0.2,0,Math.PI*2); ctx.fill();
+    // Ear (floppy)
+    ctx.fillStyle=ear; ctx.beginPath(); ctx.ellipse(sx+38,y-12,7,13,-0.4,0,Math.PI*2); ctx.fill();
+    // Eye
+    ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(sx+46,y-21,3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(sx+47,y-22,1,0,Math.PI*2); ctx.fill();
+    // Nose
+    ctx.fillStyle=d.nose; ctx.beginPath(); ctx.arc(sx+56,y-15,2.5,0,Math.PI*2); ctx.fill();
+    // Tail (wagging)
+    const tw=Math.sin(anim*2)*15;
+    ctx.strokeStyle=col; ctx.lineWidth=5; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(sx-14,y-16); ctx.quadraticCurveTo(sx-24,y-28+tw,sx-20,y-34+tw); ctx.stroke();
+    // Short stubby legs
+    ctx.strokeStyle=col; ctx.lineWidth=7; ctx.lineCap='round';
+    const lf1=Math.sin(anim)*6, lf2=Math.sin(anim+Math.PI)*6;
+    ctx.beginPath(); ctx.moveTo(sx+2,y-8); ctx.lineTo(sx+2+lf1,y+2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx+16,y-8); ctx.lineTo(sx+16+lf2,y+2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx+28,y-8); ctx.lineTo(sx+28+lf1,y+2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx+40,y-8); ctx.lineTo(sx+40+lf2,y+2); ctx.stroke();
+  }
+  // PUDEL (fluffy, round)
+  else if(d.i===1){
+    ctx.fillStyle=col;
+    // Fluffy body puffs
+    ctx.beginPath(); ctx.arc(sx+16,y-16,14,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx+30,y-14,11,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx+8,y-14,10,0,Math.PI*2); ctx.fill();
+    // Head
+    ctx.beginPath(); ctx.arc(sx+38,y-22,12,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx+44,y-18,8,0,Math.PI*2); ctx.fill(); // snout puff
+    ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(sx+48,y-17,2,0,Math.PI*2); ctx.fill(); // nose
+    ctx.beginPath(); ctx.arc(sx+40,y-26,3,0,Math.PI*2); ctx.fill(); // eye
+    // Ears
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(sx+34,y-16,7,0,Math.PI*2); ctx.fill();
+    // Legs
+    ctx.fillStyle='#bbb'; ctx.strokeStyle='#bbb'; ctx.lineWidth=6; ctx.lineCap='round';
+    const l1=Math.sin(anim)*7, l2=Math.sin(anim+Math.PI)*7;
+    [sx+6,sx+16,sx+26,sx+34].forEach((lx,li)=>{
+      ctx.beginPath(); ctx.moveTo(lx,y-6); ctx.lineTo(lx+(li%2===0?l1:l2),y+4); ctx.stroke();
+      ctx.fillStyle=col; ctx.beginPath(); ctx.arc(lx+(li%2===0?l1:l2),y+5,4,0,Math.PI*2); ctx.fill(); // paw puff
+    });
+    // Tail puff
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(sx-6,y-20,8,0,Math.PI*2); ctx.fill();
+  }
+  // MOPS (chubby, wrinkly)
+  else if(d.i===2){
+    ctx.fillStyle=col;
+    // Fat body
+    ctx.beginPath(); ctx.ellipse(sx+14,y-14,20,14,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=belly; ctx.beginPath(); ctx.ellipse(sx+12,y-11,13,8,0,0,Math.PI*2); ctx.fill();
+    // Big round head
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(sx+32,y-20,14,0,Math.PI*2); ctx.fill();
+    // Flat snout
+    ctx.fillStyle=belly; ctx.beginPath(); ctx.ellipse(sx+44,y-18,8,7,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=d.nose; ctx.beginPath(); ctx.ellipse(sx+48,y-17,4,3,0,0,Math.PI*2); ctx.fill();
+    // Wrinkles
+    ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(sx+36,y-24); ctx.quadraticCurveTo(sx+40,y-22,sx+36,y-20); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx+40,y-25); ctx.quadraticCurveTo(sx+44,y-23,sx+40,y-21); ctx.stroke();
+    // Eyes (big)
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(sx+34,y-24,4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(sx+34,y-24,2.5,0,Math.PI*2); ctx.fill();
+    // Ears (small)
+    ctx.fillStyle='#a07040'; ctx.beginPath(); ctx.ellipse(sx+26,y-26,5,7,0.3,0,Math.PI*2); ctx.fill();
+    // Curl tail
+    ctx.strokeStyle=col; ctx.lineWidth=5; ctx.lineCap='round';
+    ctx.beginPath(); ctx.arc(sx-4,y-18,7,0,Math.PI*1.5); ctx.stroke();
+    // Stubby legs
+    ctx.fillStyle=col; ctx.strokeStyle=col; ctx.lineWidth=7;
+    const l1=Math.sin(anim)*5, l2=Math.sin(anim+Math.PI)*5;
+    [sx+2,sx+12,sx+22,sx+30].forEach((lx,li)=>{
+      ctx.beginPath(); ctx.moveTo(lx,y-4); ctx.lineTo(lx+(li%2===0?l1:l2),y+4); ctx.stroke();
+    });
+  }
+  // DALMATINER (white with spots)
+  else if(d.i===3){
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.ellipse(sx+15,y-15,24,12,0,0,Math.PI*2); ctx.fill();
+    // Spots
+    ctx.fillStyle='#222';
+    [[sx+8,y-20],[sx+22,y-14],[sx+32,y-18],[sx+5,y-10]].forEach(([bx,by])=>{
+      ctx.beginPath(); ctx.arc(bx,by,3+Math.random()*0,0,Math.PI*2); ctx.fill();
+    });
+    // Head
+    ctx.fillStyle=col; ctx.beginPath(); ctx.ellipse(sx+38,y-20,13,11,0.2,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=col; ctx.beginPath(); ctx.ellipse(sx+48,y-17,8,6,0.1,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(sx+36,y-20,3,0,Math.PI*2); ctx.fill(); // spot on head
+    ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(sx+43,y-23,3,0,Math.PI*2); ctx.fill(); // eye
+    ctx.beginPath(); ctx.arc(sx+54,y-16,2.5,0,Math.PI*2); ctx.fill(); // nose
+    // Ear (floppy, spotted)
+    ctx.fillStyle=col; ctx.beginPath(); ctx.ellipse(sx+34,y-13,6,12,-0.3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(sx+33,y-12,2.5,0,Math.PI*2); ctx.fill();
+    // Tail
+    ctx.strokeStyle=col; ctx.lineWidth=4; ctx.lineCap='round';
+    const tw=Math.sin(anim*2.5)*12;
+    ctx.beginPath(); ctx.moveTo(sx-10,y-17); ctx.quadraticCurveTo(sx-20,y-26+tw,sx-16,y-32+tw); ctx.stroke();
+    // Legs
+    ctx.strokeStyle=col; ctx.lineWidth=6;
+    const l1=Math.sin(anim)*7, l2=Math.sin(anim+Math.PI)*7;
+    [sx+4,sx+16,sx+26,sx+36].forEach((lx,li)=>{
+      ctx.beginPath(); ctx.moveTo(lx,y-6); ctx.lineTo(lx+(li%2===0?l1:l2),y+4); ctx.stroke();
+    });
+  }
+
+  ctx.restore();
+}
+
+function drawDogs(){
+  dogs.forEach(d=>{
+    const sx=(d.x-camX);
+    if(sx<-80||sx>W+80) return;
+    const flash=d.boostTimer>0&&Math.floor(frameT/4)%2;
+    ctx.globalAlpha=flash?0.6:1;
+    drawDackel(d,sx);
+    ctx.globalAlpha=1;
+
+    // Name tag
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.roundRect(sx+6,d.y-42,38,14,4); ctx.fill();
+    ctx.fillStyle=d.i===0?'#fbbf24':'#fff'; ctx.font='bold 9px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText(d.name,sx+25,d.y-32);
+
+    // Place badge
+    const placeCol=d.place===1?'#fbbf24':d.place===2?'#d1d5db':'#cd7c2f';
+    ctx.fillStyle=placeCol; ctx.font='bold 11px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText(`${d.place}.`,sx+2,d.y-46);
+  });
+}
+
+function drawParticles(){
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life/40; ctx.fillStyle=p.col;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha=1;
+}
+
+function drawHUD(){
+  const pl=dogs[0];
+  ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(0,0,W,40);
+
+  // Place
+  const placeStr=pl.finished?`${pl.place}. Platz!`:`${pl.place}. Platz`;
+  const pc=pl.place===1?'#fbbf24':pl.place===2?'#d1d5db':pl.place===3?'#cd7c2f':'#94a3b8';
+  ctx.fillStyle=pc; ctx.font='bold 18px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText(placeStr,10,26);
+
+  // Progress bar
+  const pct=Math.min(1,pl.x/RACE_LEN);
+  ctx.fillStyle='rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.roundRect(W/2-140,10,280,20,10); ctx.fill();
+  const bg=ctx.createLinearGradient(W/2-140,0,W/2+140,0);
+  bg.addColorStop(0,'#4ade80'); bg.addColorStop(1,'#fbbf24');
+  if(pct>0){ctx.fillStyle=bg; ctx.beginPath(); ctx.roundRect(W/2-140,10,280*pct,20,10); ctx.fill();}
+  ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='9px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText(`${Math.round(pct*100)}%`,W/2,24);
+  ctx.fillStyle='#4ade80'; ctx.fillText('🏁',W/2+148,24);
+
+  // Speed / boost
+  ctx.fillStyle=pl.boostTimer>0?'#f97316':'#94a3b8'; ctx.font='bold 13px Segoe UI'; ctx.textAlign='right';
+  ctx.fillText(pl.boostTimer>0?'🔥 BOOST!':'→ Rechts halten = schneller',W-10,26);
+
+  // Particles
+  drawParticles();
+
+  // Countdown
+  if(countdown>0){
+    ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,H);
+    ctx.shadowColor='#fbbf24'; ctx.shadowBlur=30;
+    ctx.font='bold 110px Segoe UI'; ctx.fillStyle='#fbbf24'; ctx.textAlign='center';
+    ctx.fillText(countdown,W/2,H/2+35);
+    ctx.shadowBlur=0;
+    ctx.font='bold 22px Segoe UI'; ctx.fillStyle='#fff';
+    ctx.fillText('Fertig machen!',W/2,H/2-60);
+  }
+}
+
+// ── SCREENS ──
+function drawMenu(){
+  // Background
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#87ceeb'); g.addColorStop(1,'#5a9a30');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  // Stars
+  for(let i=0;i<30;i++){
+    ctx.fillStyle=`rgba(255,255,255,${0.3+Math.sin(frameT*0.04+i)*0.2})`;
+    ctx.beginPath(); ctx.arc((i*157)%W,(i*93)%120,1.5,0,Math.PI*2); ctx.fill();
+  }
+
+  // Title
+  ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.roundRect(W/2-240,20,480,64,16); ctx.fill();
+  ctx.font='bold 30px Segoe UI'; ctx.textAlign='center';
+  const tg=ctx.createLinearGradient(W/2-180,0,W/2+180,0);
+  tg.addColorStop(0,'#f59e0b'); tg.addColorStop(0.5,'#ef4444'); tg.addColorStop(1,'#f97316');
+  ctx.fillStyle=tg; ctx.fillText('🐕 Noah3\'s Dackel-Rennen',W/2,64);
+
+  // Preview dogs on track
+  dogs=[...DOG_DEFS.map((def,i)=>({
+    ...def, i, x:100+i*20, y:LANE_Y[i], gnd:GROUND_Y[i],
+    vy:0, onGround:true, speed:2, boostTimer:0, legAnim:frameT*0.3,
+    finished:false, place:i+1,
+  }))];
+  camX=0;
+  LANE_Y.forEach((ly,i)=>{
+    ctx.fillStyle=i%2===0?'#5a9a30':'#4a8a22'; ctx.fillRect(0,ly-LANE_H/2,W,LANE_H);
+    ctx.fillStyle=i%2===0?'#3a7a18':'#2a6a0a'; ctx.fillRect(0,GROUND_Y[i],W,6);
+  });
+  drawDogs();
+
+  // Instructions
+  ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.beginPath(); ctx.roundRect(W/2-240,230,480,110,14); ctx.fill();
+  ctx.strokeStyle='rgba(245,158,11,0.4)'; ctx.lineWidth=2; ctx.beginPath(); ctx.roundRect(W/2-240,230,480,110,14); ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.font='14px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText('→ / D halten = schneller laufen',W/2,258);
+  ctx.fillStyle='#4ade80';
+  ctx.fillText('↑ / Leertaste = springen (über Hürden!)',W/2,282);
+  ctx.fillStyle='#f59e0b';
+  ctx.fillText('🦴 Knochen einsammeln = Boost 🔥',W/2,306);
+  ctx.fillStyle='#94a3b8'; ctx.font='11px Segoe UI';
+  ctx.fillText('Als Erster die Ziellinie erreichen!',W/2,330);
+
+  // Start button
+  const pulse=Math.sin(frameT*0.07)*5;
+  ctx.fillStyle='rgba(245,158,11,0.18)'; ctx.beginPath(); ctx.roundRect(W/2-130,358+pulse,260,52,14); ctx.fill();
+  ctx.strokeStyle='#f59e0b'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.roundRect(W/2-130,358+pulse,260,52,14); ctx.stroke();
+  ctx.font='bold 18px Segoe UI'; ctx.fillStyle='#f59e0b';
+  ctx.fillText('🐕 Rennen starten!',W/2,391+pulse);
+
+  cv.onclick=()=>{ initRace(); scene='game'; cv.onclick=null; };
+}
+
+function drawFinish(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0f172a'); g.addColorStop(1,'#1a0f00');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // Confetti
+  for(let i=0;i<80;i++){
+    const x=(i*137+frameT*2)%W, y=((i*97+frameT*1.5)%H);
+    ctx.fillStyle=['#f59e0b','#ef4444','#4ade80','#38bdf8','#a78bfa'][i%5];
+    ctx.beginPath(); ctx.arc(x,y,2.5+Math.sin(i)*1.5,0,Math.PI*2); ctx.fill();
+  }
+  ctx.textAlign='center';
+  const pl=dogs[0];
+  const win=pl.place===1;
+  ctx.font='60px Segoe UI'; ctx.fillText(win?'🏆':'🎽',W/2,100);
+  ctx.font='bold 26px Segoe UI';
+  const tg=ctx.createLinearGradient(W/2-160,0,W/2+160,0);
+  tg.addColorStop(0,'#f59e0b'); tg.addColorStop(1,win?'#4ade80':'#f87171');
+  ctx.fillStyle=tg;
+  ctx.fillText(win?'Noah3 gewinnt! 🐕💨':`Platz ${pl.place} — gut gelaufen!`,W/2,155);
+
+  // Podium
+  ctx.font='14px Segoe UI'; ctx.fillStyle='#fff';
+  const ordered=[...finishOrder];
+  ordered.forEach((d,i)=>{
+    const mx=W/2-180+i*120;
+    const placeEmoji=['🥇','🥈','🥉','4.'][i];
+    ctx.fillStyle=KART_COLORS[i]??'#94a3b8';
+    ctx.fillText(`${placeEmoji} ${d.name}`,mx,210);
+  });
+
+  const pulse=Math.sin(frameT*0.07)*4;
+  ctx.fillStyle='rgba(245,158,11,0.15)'; ctx.beginPath(); ctx.roundRect(W/2-120,260+pulse,240,50,14); ctx.fill();
+  ctx.strokeStyle='#f59e0b'; ctx.lineWidth=2; ctx.beginPath(); ctx.roundRect(W/2-120,260+pulse,240,50,14); ctx.stroke();
+  ctx.font='bold 15px Segoe UI'; ctx.fillStyle='#f59e0b';
+  ctx.fillText('🔄 Nochmal rennen!',W/2,291+pulse);
+  cv.onclick=()=>{ scene='menu'; cv.onclick=null; };
+}
+
+const KART_COLORS=['#3b82f6','#d4d4d4','#c8a878','#f5f5f5'];
+
+// ── MAIN LOOP ──
+function loop(){
+  requestAnimationFrame(loop);
+  frameT++;
+  ctx.clearRect(0,0,W,H);
+  if(scene==='menu')    drawMenu();
+  else if(scene==='game'){ update(); drawBg(); drawHurdles(); drawBones(); drawDogs(); drawHUD(); }
+  else if(scene==='finish'){ drawBg(); drawFinish(); }
+}
+loop();
+</script>
+</body>
+</html>
