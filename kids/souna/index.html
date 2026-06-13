@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wizard Pong ⚡</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #080610;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 0.6rem; user-select: none; padding: 1rem;
+      overflow: hidden;
+      font-family: 'Cinzel', Georgia, serif;
+    }
+
+    /* Animated background stars */
+    .stars {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      overflow: hidden;
+    }
+    .star {
+      position: absolute; border-radius: 50%;
+      background: #fff; animation: twinkle var(--d) ease-in-out infinite alternate;
+    }
+    @keyframes twinkle { from { opacity: var(--a1); } to { opacity: var(--a2); } }
+
+    /* Floating magic particles */
+    .mote {
+      position: fixed; pointer-events: none; z-index: 0;
+      font-size: 0.7rem; animation: float var(--fd) ease-in-out infinite;
+      opacity: 0.25;
+    }
+    @keyframes float {
+      0%   { transform: translateY(0) rotate(0deg); opacity: 0.15; }
+      50%  { opacity: 0.4; }
+      100% { transform: translateY(-80px) rotate(360deg); opacity: 0; }
+    }
+
+    /* Title */
+    .title {
+      position: relative; z-index: 1;
+      font-family: 'Cinzel Decorative', serif;
+      font-size: clamp(1.2rem, 4vw, 1.9rem);
+      color: #D4AF37;
+      text-shadow: 0 0 20px rgba(212,175,55,0.7), 0 0 40px rgba(212,175,55,0.3), 0 2px 4px #000;
+      letter-spacing: 0.08em; text-align: center;
+    }
+    .title span { color: #c0392b; }
+
+    /* Arena */
+    .wrap { position: relative; z-index: 1; }
+    canvas {
+      display: block; border-radius: 4px;
+      border: 3px solid #3d2b00;
+      box-shadow:
+        0 0 0 1px #1a1200,
+        0 0 30px rgba(212,175,55,0.2),
+        0 0 80px rgba(212,175,55,0.08),
+        0 20px 60px rgba(0,0,0,0.8);
+    }
+
+    /* Overlay */
+    .overlay {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 0.9rem;
+      background: rgba(4, 3, 10, 0.88);
+      backdrop-filter: blur(6px);
+      border-radius: 4px;
+    }
+    .overlay.hidden { display: none; }
+
+    .ov-icon { font-size: 3.2rem; animation: floatIcon 3s ease-in-out infinite; }
+    @keyframes floatIcon {
+      0%,100% { transform: translateY(0) rotate(-5deg); }
+      50%      { transform: translateY(-10px) rotate(5deg); }
+    }
+
+    .ov-title {
+      font-family: 'Cinzel Decorative', serif;
+      font-size: clamp(1.2rem, 3.5vw, 1.7rem);
+      color: #D4AF37;
+      text-shadow: 0 0 20px rgba(212,175,55,0.8), 0 2px 4px #000;
+      text-align: center; letter-spacing: 0.05em;
+    }
+    .ov-title.win1 { color: #c0392b; text-shadow: 0 0 20px rgba(192,57,43,0.8); }
+    .ov-title.win2 { color: #1a7a4a; text-shadow: 0 0 20px rgba(26,122,74,0.8); }
+
+    .ov-sub {
+      font-size: 0.75rem; color: #7a6030;
+      text-align: center; line-height: 1.9;
+      font-family: 'Cinzel', serif;
+    }
+    .ov-sub em { color: #D4AF37; font-style: normal; }
+
+    .btn-magic {
+      position: relative; padding: 0.7rem 2rem;
+      background: linear-gradient(180deg, #8B0000 0%, #5a0000 100%);
+      border: 2px solid #D4AF37; border-radius: 4px;
+      color: #D4AF37;
+      font-family: 'Cinzel', serif; font-size: 0.95rem; font-weight: 700;
+      cursor: pointer; letter-spacing: 0.1em;
+      box-shadow: 0 4px 0 #2a0000, 0 0 20px rgba(212,175,55,0.2);
+      transition: transform 0.1s, box-shadow 0.1s;
+      text-shadow: 0 0 10px rgba(212,175,55,0.5);
+    }
+    .btn-magic:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 0 #2a0000, 0 0 30px rgba(212,175,55,0.35);
+    }
+    .btn-magic:active { transform: translateY(3px); box-shadow: 0 1px 0 #2a0000; }
+
+    /* Controls hint */
+    .controls {
+      position: relative; z-index: 1;
+      display: flex; gap: 2rem; font-size: 0.65rem;
+      color: #5a4010; letter-spacing: 0.1em;
+    }
+    .ctrl-p1 { color: #c0392b; }
+    .ctrl-p2 { color: #1a7a4a; }
+
+    /* Score particle */
+    .spark {
+      position: fixed; pointer-events: none; z-index: 999;
+      font-size: 1rem; animation: spark 1s ease-out forwards;
+    }
+    @keyframes spark {
+      0%   { opacity:1; transform: translate(0,0) scale(1); }
+      100% { opacity:0; transform: translate(var(--dx),var(--dy)) scale(0.2) rotate(var(--r)); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Stars -->
+<div class="stars" id="stars"></div>
+
+<div class="title">⚡ Wizard Pong <span>🧙</span></div>
+
+<div class="wrap">
+  <canvas id="c"></canvas>
+  <div class="overlay" id="overlay">
+    <div class="ov-icon">🔮</div>
+    <div class="ov-title" id="ovTitle">Wizard Pong</div>
+    <div class="ov-sub" id="ovSub">
+      Wer zuerst <em>5 Punkte</em> hat, gewinnt!
+    </div>
+    <div id="modeSelect" style="display:flex;gap:0.7rem;">
+      <button class="btn-magic" onclick="startGame(1)">🧙 1 Spieler</button>
+      <button class="btn-magic" onclick="startGame(2)">👥 2 Spieler</button>
+    </div>
+    <button class="btn-magic" id="ovBtn" style="display:none" onclick="startGame(window._lastMode)">🔄 Nochmal</button>
+  </div>
+</div>
+
+<div class="controls">
+  <span class="ctrl-p1">🔴 W/A/S/D — Du</span>
+  <span class="ctrl-p2">🟢 🤖 Dunkler Zauberer</span>
+</div>
+
+<script>
+// ── Stars ──
+const starsEl = document.getElementById('stars');
+for(let i=0;i<120;i++) {
+  const s = document.createElement('div');
+  s.className = 'star';
+  const sz = Math.random()*2+0.5;
+  s.style.cssText = `width:${sz}px;height:${sz}px;
+    left:${Math.random()*100}%;top:${Math.random()*100}%;
+    --d:${2+Math.random()*4}s;
+    --a1:${0.05+Math.random()*0.2};--a2:${0.3+Math.random()*0.5};
+    animation-delay:${Math.random()*4}s`;
+  starsEl.appendChild(s);
+}
+// Floating magic motes
+const MOTES = ['✦','·','★','✧','∗'];
+for(let i=0;i<18;i++) {
+  const m = document.createElement('div');
+  m.className = 'mote';
+  m.textContent = MOTES[Math.floor(Math.random()*MOTES.length)];
+  m.style.cssText = `left:${Math.random()*100}%;top:${60+Math.random()*40}%;
+    --fd:${4+Math.random()*6}s; animation-delay:${Math.random()*6}s; color:#D4AF37`;
+  document.body.appendChild(m);
+}
+
+// ── Canvas ──
+const W = 680, H = 460;
+const PAD_W = 12, PAD_H = 85, PAD_SPD = 7;
+const BALL_R = 10;
+const WIN = 5;
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+cv.width = W; cv.height = H;
+
+// Stone tile pattern
+const tileCanvas = document.createElement('canvas');
+tileCanvas.width = 40; tileCanvas.height = 40;
+const tc = tileCanvas.getContext('2d');
+tc.fillStyle = '#0d0a1a';
+tc.fillRect(0,0,40,40);
+tc.strokeStyle = 'rgba(60,40,10,0.25)';
+tc.lineWidth = 1;
+tc.strokeRect(0.5,0.5,39,39);
+tc.fillStyle = 'rgba(255,255,255,0.012)';
+tc.fillRect(1,1,38,18);
+const stonePat = ctx.createPattern(tileCanvas,'repeat');
+
+// ── Colors ──
+const P1_COL   = '#c0392b';
+const P1_GLOW  = 'rgba(192,57,43,0.6)';
+const P2_COL   = '#1a7a4a';
+const P2_GLOW  = 'rgba(26,122,74,0.6)';
+const GOLD     = '#D4AF37';
+const GOLD_GLW = 'rgba(212,175,55,0.7)';
+
+// ── State ──
+let p1, p2, ball, score, running, keys, raf, aiMode;
+
+function init() {
+  p1 = { x: 28, y: H/2-PAD_H/2, x0: 28 };
+  p2 = { x: W-28-PAD_W, y: H/2-PAD_H/2, x0: W-28-PAD_W };
+  score = { p1:0, p2:0 };
+  keys = {}; running = true;
+  updateControlsHint();
+  launchBall(Math.random()<.5?1:2);
+}
+
+function updateControlsHint() {
+  const c1 = document.querySelector('.ctrl-p1');
+  const c2 = document.querySelector('.ctrl-p2');
+  c1.textContent = '🔴 W/A/S/D — ' + (aiMode===1 ? 'Du' : 'Spieler 1');
+  c2.textContent = aiMode===1 ? '🟢 🤖 Dunkler Zauberer' : '🟢 Pfeiltasten — Spieler 2';
+}
+
+function launchBall(towards) {
+  const dir = towards===1 ? -1 : 1;
+  const ang = (Math.random()*50-25)*(Math.PI/180);
+  const spd = 7;
+  ball = {
+    x:W/2, y:H/2,
+    vx: Math.cos(ang)*spd*dir,
+    vy: Math.sin(ang)*spd,
+    trail:[], spd,
+    sparkle: 0,
+  };
+}
+
+// ── Loop ──
+function loop() {
+  if(!running) return;
+  raf = requestAnimationFrame(loop);
+  update(); draw();
+}
+
+function update() {
+  if(keys['w']||keys['W']) p1.y = Math.max(0,       p1.y - PAD_SPD);
+  if(keys['s']||keys['S']) p1.y = Math.min(H-PAD_H, p1.y + PAD_SPD);
+  if(keys['a']||keys['A']) p1.x = Math.max(0,       p1.x - PAD_SPD);
+  if(keys['d']||keys['D']) p1.x = Math.min(W/2-PAD_W-10, p1.x + PAD_SPD);
+
+  // P2: AI or human
+  if(aiMode === 1) {
+    const aiSpd = 4.5 + Math.min(score.p2 + score.p1, 6) * 0.2;
+    const aiTargetY = ball.y - PAD_H/2;
+    const aiTargetX = ball.vx > 0 ? Math.min(W-PAD_W-10, ball.x - 80) : p2.x0;
+    if(p2.y < aiTargetY - 4) p2.y = Math.min(H-PAD_H, p2.y + aiSpd);
+    if(p2.y > aiTargetY + 4) p2.y = Math.max(0,       p2.y - aiSpd);
+    p2.x += (aiTargetX - p2.x) * 0.07;
+  } else {
+    if(keys['ArrowUp'])    p2.y = Math.max(0,       p2.y - PAD_SPD);
+    if(keys['ArrowDown'])  p2.y = Math.min(H-PAD_H, p2.y + PAD_SPD);
+    if(keys['ArrowLeft'])  p2.x = Math.max(W/2+10,  p2.x - PAD_SPD);
+    if(keys['ArrowRight']) p2.x = Math.min(W-PAD_W, p2.x + PAD_SPD);
+  }
+
+  ball.trail.push({x:ball.x, y:ball.y});
+  if(ball.trail.length>16) ball.trail.shift();
+
+  ball.x += ball.vx; ball.y += ball.vy;
+
+  // Wrap top/bottom
+  if(ball.y - BALL_R < 0) ball.y += H;
+  if(ball.y + BALL_R > H) ball.y -= H;
+
+  // Paddle collisions (work in all 4 directions now)
+  // P1: ball hits right face of wand
+  if(ball.x-BALL_R <= p1.x+PAD_W && ball.x-BALL_R >= p1.x &&
+     ball.y >= p1.y-BALL_R && ball.y <= p1.y+PAD_H+BALL_R && ball.vx<0) {
+    ball.x = p1.x+PAD_W+BALL_R; bounce(p1);
+    sparks(ball.x, ball.y, P1_COL);
+  }
+  // P2: ball hits left face of wand
+  if(ball.x+BALL_R >= p2.x && ball.x+BALL_R <= p2.x+PAD_W &&
+     ball.y >= p2.y-BALL_R && ball.y <= p2.y+PAD_H+BALL_R && ball.vx>0) {
+    ball.x = p2.x-BALL_R; bounce(p2);
+    sparks(ball.x, ball.y, P2_COL);
+  }
+
+  // Score — based on fixed side walls, not paddle position
+  if(ball.x < -20) { score.p2++; checkWin() || launchBall(2); }
+  if(ball.x > W+20){ score.p1++; checkWin() || launchBall(1); }
+
+  if(ball.sparkle > 0) ball.sparkle--;
+}
+
+function bounce(pad) {
+  const rel = (ball.y-(pad.y+PAD_H/2))/(PAD_H/2);
+  const ang = rel*58*(Math.PI/180);
+  ball.spd = Math.min(ball.spd*1.06, 14);
+  const dir = ball.vx<0?1:-1;
+  ball.vx = Math.cos(ang)*ball.spd*dir;
+  ball.vy = Math.sin(ang)*ball.spd;
+  ball.sparkle = 8;
+}
+
+function checkWin() {
+  if(score.p1>=WIN || score.p2>=WIN) {
+    running = false; cancelAnimationFrame(raf); draw();
+    const w = score.p1>=WIN?1:2;
+    const spells = ['Expelliarmus!','Wingardium Leviosa!','Expecto Patronum!','Alohomora!','Lumos Maxima!'];
+    const winText = aiMode===1
+      ? (w===1 ? '⚡ Du gewinnst!' : '🤖 Der dunkle Zauberer siegt!')
+      : (w===1 ? '🔴 Spieler 1 gewinnt!' : '🟢 Spieler 2 gewinnt!');
+    document.getElementById('ovTitle').textContent = winText;
+    document.getElementById('ovTitle').className = 'ov-title ' + (w===1?'win1':'win2');
+    document.getElementById('ovSub').innerHTML =
+      `${score.p1} : ${score.p2}<br><em>${spells[Math.floor(Math.random()*spells.length)]}</em>`;
+    document.getElementById('modeSelect').style.display = 'none';
+    document.getElementById('ovBtn').style.display = 'block';
+    document.getElementById('ovBtn').textContent = '✦ Accio Rematch! ✦';
+    document.getElementById('overlay').classList.remove('hidden');
+    return true;
+  }
+  return false;
+}
+
+// ── Draw ──
+function draw() {
+  // Stone floor
+  ctx.fillStyle = stonePat;
+  ctx.fillRect(0,0,W,H);
+
+  // Vignette
+  const vig = ctx.createRadialGradient(W/2,H/2,H*0.2, W/2,H/2,H*0.8);
+  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vig; ctx.fillRect(0,0,W,H);
+
+  // Center divider — magic rune style
+  ctx.setLineDash([8,8]);
+  ctx.strokeStyle = 'rgba(212,175,55,0.18)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(W/2,0); ctx.lineTo(W/2,H); ctx.stroke();
+  ctx.setLineDash([]);
+  // Center ornament
+  ctx.font = '22px serif'; ctx.textAlign='center'; ctx.fillStyle='rgba(212,175,55,0.25)';
+  for(let y=60;y<H;y+=80) ctx.fillText('✦', W/2, y+8);
+
+  // Scores
+  ctx.textAlign = 'center';
+  ctx.font = `bold 68px 'Cinzel', serif`;
+  ctx.fillStyle = P1_COL;
+  ctx.shadowColor = P1_COL; ctx.shadowBlur = 20;
+  ctx.fillText(score.p1, W/2-100, 82);
+  ctx.fillStyle = P2_COL;
+  ctx.shadowColor = P2_COL; ctx.shadowBlur = 20;
+  ctx.fillText(score.p2, W/2+100, 82);
+  ctx.shadowBlur = 0;
+
+  // Sub labels
+  ctx.font = `11px 'Cinzel', serif`;
+  ctx.fillStyle = 'rgba(192,57,43,0.5)';
+  ctx.fillText('DU', W/2-100, 100);
+  ctx.fillStyle = 'rgba(26,122,74,0.5)';
+  ctx.fillText('🤖 KI', W/2+100, 100);
+
+  // Ball trail (golden sparkle)
+  ball.trail.forEach((t,i) => {
+    const a = (i/ball.trail.length)*0.4;
+    const r = BALL_R*(i/ball.trail.length)*0.7;
+    ctx.beginPath(); ctx.arc(t.x,t.y,r,0,Math.PI*2);
+    ctx.fillStyle = `rgba(212,175,55,${a})`;
+    ctx.fill();
+  });
+
+  // Ball glow
+  const gr = ctx.createRadialGradient(ball.x,ball.y,0, ball.x,ball.y,BALL_R*4);
+  gr.addColorStop(0, 'rgba(212,175,55,0.4)');
+  gr.addColorStop(1, 'rgba(212,175,55,0)');
+  ctx.fillStyle = gr;
+  ctx.beginPath(); ctx.arc(ball.x,ball.y,BALL_R*4,0,Math.PI*2); ctx.fill();
+
+  // Ball — Golden Snitch
+  ctx.shadowColor = GOLD_GLW; ctx.shadowBlur = ball.sparkle>0?35:18;
+  // Main sphere
+  const sg = ctx.createRadialGradient(ball.x-3,ball.y-3,1, ball.x,ball.y,BALL_R);
+  sg.addColorStop(0,'#ffe87a'); sg.addColorStop(0.5,GOLD); sg.addColorStop(1,'#8b6914');
+  ctx.fillStyle = sg;
+  ctx.beginPath(); ctx.arc(ball.x,ball.y,BALL_R,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // Wings
+  drawWings(ball.x,ball.y);
+
+  // Paddles — magic wands
+  drawWand(p1, P1_COL, P1_GLOW, true);
+  drawWand(p2, P2_COL, P2_GLOW, false);
+}
+
+function drawWings(bx,by) {
+  const t = Date.now()/400;
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = 'rgba(212,175,55,0.7)'; ctx.lineWidth = 1;
+  // Left wing
+  ctx.beginPath();
+  ctx.moveTo(bx-BALL_R, by);
+  ctx.bezierCurveTo(bx-28, by-18+Math.sin(t)*5, bx-22, by+10+Math.cos(t)*4, bx-BALL_R, by+4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(bx-BALL_R, by);
+  ctx.bezierCurveTo(bx-24, by+8+Math.sin(t)*3, bx-18, by+18, bx-BALL_R, by+6);
+  ctx.stroke();
+  // Right wing
+  ctx.beginPath();
+  ctx.moveTo(bx+BALL_R, by);
+  ctx.bezierCurveTo(bx+28, by-18+Math.sin(t)*5, bx+22, by+10+Math.cos(t)*4, bx+BALL_R, by+4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(bx+BALL_R, by);
+  ctx.bezierCurveTo(bx+24, by+8+Math.sin(t)*3, bx+18, by+18, bx+BALL_R, by+6);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWand(pad, color, glow, isLeft) {
+  const x = pad.x, y = pad.y, pw = PAD_W, ph = PAD_H;
+
+  // Glow
+  ctx.shadowColor = glow; ctx.shadowBlur = 16;
+
+  // Wand body (dark wood gradient)
+  const wg = ctx.createLinearGradient(x,y, x+pw,y);
+  wg.addColorStop(0, isLeft?'#2a0a0a':'#0a1f0a');
+  wg.addColorStop(0.3, color);
+  wg.addColorStop(1, isLeft?'#1a0505':'#051005');
+  ctx.fillStyle = wg;
+  roundRect(x, y, pw, ph, 6); ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Tip glow
+  const tipY = isLeft ? y+ph : y;
+  const tipGrad = ctx.createRadialGradient(x+pw/2, tipY, 0, x+pw/2, tipY, 18);
+  tipGrad.addColorStop(0, color.replace(')',',0.6)').replace('rgb','rgba'));
+  tipGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = tipGrad;
+  ctx.beginPath(); ctx.arc(x+pw/2, tipY, 18, 0, Math.PI*2); ctx.fill();
+
+  // Gold ring at tip
+  ctx.strokeStyle = GOLD; ctx.lineWidth = 2;
+  ctx.shadowColor = GOLD_GLW; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(x+pw/2, tipY, 5, 0, Math.PI*2); ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Shine on wand
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  roundRect(x+2, y+4, 3, ph-8, 3); ctx.fill();
+}
+
+function roundRect(x,y,w,h,r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r); ctx.closePath();
+}
+
+// ── Sparks on bounce ──
+function sparks(bx, by, color) {
+  const rect = cv.getBoundingClientRect();
+  const sx = rect.left + bx*(rect.width/W);
+  const sy = rect.top  + by*(rect.height/H);
+  const fx = ['✦','★','·','∗','✧'];
+  for(let i=0;i<10;i++) {
+    const el=document.createElement('div');
+    el.className='spark'; el.textContent=fx[Math.floor(Math.random()*fx.length)];
+    el.style.color=color;
+    const a=Math.random()*2*Math.PI, d=30+Math.random()*70;
+    el.style.setProperty('--dx',`${Math.cos(a)*d}px`);
+    el.style.setProperty('--dy',`${Math.sin(a)*d}px`);
+    el.style.setProperty('--r',`${Math.random()*360}deg`);
+    el.style.left=sx+'px'; el.style.top=sy+'px';
+    el.style.animationDelay=`${Math.random()*0.1}s`;
+    document.body.appendChild(el);
+    setTimeout(()=>el.remove(),1100);
+  }
+}
+
+// ── Input ──
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  if(['ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup',e=>{ keys[e.key]=false; });
+
+// ── Start ──
+function startGame(mode) {
+  aiMode = mode;
+  window._lastMode = mode;
+  document.getElementById('overlay').classList.add('hidden');
+  // Reset overlay for next time (show mode buttons, hide rematch)
+  document.getElementById('modeSelect').style.display = 'flex';
+  document.getElementById('ovBtn').style.display = 'none';
+  document.getElementById('ovTitle').textContent = 'Wizard Pong';
+  document.getElementById('ovTitle').className = 'ov-title';
+  cancelAnimationFrame(raf);
+  init();
+  requestAnimationFrame(loop);
+}
+
+draw();
+
+draw();
+</script>
+</body>
+</html>
