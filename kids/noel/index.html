@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Noel's Star Wars ⚔️</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000; min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #fff; gap: 0.4rem; padding: 0.4rem; user-select: none;
+    }
+    h1 {
+      font-size: clamp(1rem,3.5vw,1.5rem); font-weight: 900;
+      background: linear-gradient(135deg, #facc15, #3b82f6, #facc15);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    canvas { border-radius: 10px; border: 2px solid rgba(59,130,246,0.5);
+      box-shadow: 0 0 50px rgba(59,130,246,0.2), 0 20px 60px rgba(0,0,0,0.9); display: block; }
+    .hint { font-size: 0.65rem; color: #1a2a1a; letter-spacing: 0.08em; }
+  </style>
+</head>
+<body>
+<h1>⚔️ Noel's Star Wars</h1>
+<canvas id="c"></canvas>
+<div class="hint">WASD / Pfeiltasten = Bewegen &nbsp;·&nbsp; Leertaste = Lichtschwert-Angriff &nbsp;·&nbsp; Q = Machtschub</div>
+<script>
+const W=700, H=460;
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+cv.width=W; cv.height=H;
+
+const PLAY_TOP=62, PLAY_BOT=H-82, PLAY_H=PLAY_BOT-PLAY_TOP;
+
+// ── MISSIONS ──
+const MISSIONS=[
+  { planet:'geonosis', label:'🏜️ Geonosis', title:'Kampf gegen die Droiden!',
+    desc:'Besiege 8 Kampfdroiden für die Republik!', type:'hunt', enemyType:'droid', target:8 },
+  { planet:'coruscant', label:'🌆 Coruscant', title:'Schütze den Senat!',
+    desc:'Halte die Senatskammer 25 Sekunden!', type:'defend', enemyType:'superdroid', target:25,
+    note:'Super-Droiden greifen den Senat an! Halte sie auf!' },
+  { planet:'mustafar', label:'🌋 Mustafar', title:'Duel mit General Grievous!',
+    desc:'Besiege General Grievous!', type:'boss', enemyType:'grievous', target:1,
+    note:'Grievous kämpft mit 4 Lichtschwertern! Weiche seinen Angriffen aus!' },
+];
+
+// ── STATE ──
+let scene='menu', mIdx=0, frameT=0;
+let notification='', notifyTimer=0;
+let enemies=[], bolts=[], forceWaves=[], spawnTimer=0, killCount=0, advancing=false;
+let defendTimer=0, defendTick=0, objective=null;
+
+const PL={
+  x:350, y:PLAY_TOP+PLAY_H/2, hp:100, maxHp:100,
+  speed:3, radius:16,
+  atkCool:0, atkAnim:0, atkAngle:0,
+  forceCool:0,
+  facing:0, invuln:0, dmg:35, atkRange:58,
+  vx:0, vy:0,
+};
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  if([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup',e=>keys[e.key]=false);
+
+function mission(){ return MISSIONS[mIdx]; }
+function missionDone(){
+  const m=mission();
+  if(m.type==='defend') return defendTimer>=m.target;
+  return killCount>=m.target;
+}
+
+// ── ENEMY TEMPLATES ──
+const ETYPES={
+  droid:{     hp:40, spd:1.2, r:15, dmg:5,  shootCool:0, shootInterval:90,  draw(e){ drawDroid(e,'#c8a84a','#8b6914'); }},
+  superdroid:{ hp:65, spd:1.5, r:18, dmg:8,  shootCool:0, shootInterval:70,  draw(e){ drawDroid(e,'#8a9ba8','#4a6070',true); }},
+  grievous:{   hp:280,spd:1.0, r:26, dmg:12, shootCool:0, shootInterval:999,
+    draw(e){
+      ctx.shadowColor='#ef4444'; ctx.shadowBlur=18;
+      drawGrievous(e);
+      ctx.shadowBlur=0;
+    }},
+};
+
+function spawnEnemy(){
+  const m=mission();
+  const tmpl=ETYPES[m.enemyType];
+  if(!tmpl) return;
+  const remaining=m.type==='boss'?1:m.target-killCount;
+  if(remaining<=0) return;
+  let maxAlive=m.type==='boss'?1:m.type==='defend'?4:5;
+  if(enemies.length>=maxAlive) return;
+  let x,y;
+  const side=Math.floor(Math.random()*4), pad=30;
+  if(side===0){x=pad+Math.random()*(W-pad*2);y=PLAY_TOP+pad;}
+  else if(side===1){x=W-pad;y=PLAY_TOP+pad+Math.random()*(PLAY_H-pad*2);}
+  else if(side===2){x=pad+Math.random()*(W-pad*2);y=PLAY_BOT-pad;}
+  else{x=pad;y=PLAY_TOP+pad+Math.random()*(PLAY_H-pad*2);}
+  const e={...tmpl,x,y,maxHp:tmpl.hp,hp:tmpl.hp,atkCool:0,flash:0,
+    shootCool:0,saberAngle:0,saberSpin:0,
+    chargeTimer:0,charging:false,chargeDx:0,chargeDy:0,chargeLeft:0};
+  enemies.push(e);
+}
+
+// ── UPDATE ──
+function update(){
+  frameT++;
+  const m=mission();
+
+  // Player movement
+  PL.vx=0; PL.vy=0;
+  if(keys['ArrowLeft']||keys['a']||keys['A'])  PL.vx=-PL.speed;
+  if(keys['ArrowRight']||keys['d']||keys['D']) PL.vx=PL.speed;
+  if(keys['ArrowUp']||keys['w']||keys['W'])    PL.vy=-PL.speed;
+  if(keys['ArrowDown']||keys['s']||keys['S'])  PL.vy=PL.speed;
+  if(PL.vx&&PL.vy){PL.vx*=0.707;PL.vy*=0.707;}
+  if(PL.vx||PL.vy) PL.facing=Math.atan2(PL.vy,PL.vx);
+  PL.x=Math.max(PL.radius,Math.min(W-PL.radius,PL.x+PL.vx));
+  PL.y=Math.max(PL.radius+PLAY_TOP,Math.min(PLAY_BOT-PL.radius,PL.y+PL.vy));
+
+  // Lightsaber attack
+  if(PL.atkCool>0) PL.atkCool--;
+  if(PL.atkAnim>0) PL.atkAnim--;
+  if(keys[' ']&&PL.atkCool===0){
+    PL.atkCool=22; PL.atkAnim=12; PL.atkAngle=PL.facing;
+    enemies.forEach(e=>{
+      if(Math.hypot(e.x-PL.x,e.y-PL.y)<PL.atkRange+e.r){ e.hp-=PL.dmg; e.flash=8; }
+    });
+    // Deflect blaster bolts
+    bolts=bolts.filter(b=>{
+      if(Math.hypot(b.x-PL.x,b.y-PL.y)<PL.atkRange+10){
+        // Reflect back
+        const tx=b.fromEnemy?b.fromEnemy.x:b.x, ty=b.fromEnemy?b.fromEnemy.y:b.y;
+        bolts.push({x:b.x,y:b.y,vx:(b.fromEnemy?b.fromEnemy.x-b.x:PL.vx)*-0.2,
+          vy:(b.fromEnemy?b.fromEnemy.y-b.y:PL.vy)*-0.2,
+          angle:Math.atan2(b.fromEnemy?b.fromEnemy.y-b.y:0,b.fromEnemy?b.fromEnemy.x-b.x:1)+Math.PI,
+          col:'#3b82f6', dmg:25, reflected:true, life:80});
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Force push
+  if(PL.forceCool>0) PL.forceCool--;
+  if((keys['q']||keys['Q'])&&PL.forceCool===0){
+    PL.forceCool=60;
+    forceWaves.push({x:PL.x,y:PL.y,r:0,maxR:120,angle:PL.facing});
+    enemies.forEach(e=>{
+      const d=Math.hypot(e.x-PL.x,e.y-PL.y);
+      if(d<120){ e.hp-=20; e.flash=10; const a=Math.atan2(e.y-PL.y,e.x-PL.x); e.x+=Math.cos(a)*50; e.y+=Math.sin(a)*50; }
+    });
+    // Deflect nearby bolts
+    bolts.forEach(b=>{ if(Math.hypot(b.x-PL.x,b.y-PL.y)<120){ b.life=0; } });
+  }
+
+  // Force waves
+  forceWaves=forceWaves.filter(f=>f.r<f.maxR);
+  forceWaves.forEach(f=>f.r+=6);
+
+  // Bolts
+  bolts=bolts.filter(b=>{
+    b.x+=Math.cos(b.angle)*5; b.y+=Math.sin(b.angle)*5; b.life--;
+    if(b.life<=0) return false;
+    if(b.x<0||b.x>W||b.y<PLAY_TOP||b.y>PLAY_BOT) return false;
+    // Hit player (if not reflected)
+    if(!b.reflected&&PL.invuln===0&&Math.hypot(PL.x-b.x,PL.y-b.y)<PL.radius+6){
+      PL.hp=Math.max(0,PL.hp-b.dmg); PL.invuln=30;
+      if(PL.hp===0){scene='dead';return false;}
+      return false;
+    }
+    // Hit enemy if reflected
+    if(b.reflected){
+      for(const e of enemies){
+        if(Math.hypot(e.x-b.x,e.y-b.y)<e.r+6){ e.hp-=b.dmg; e.flash=8; return false; }
+      }
+    }
+    return true;
+  });
+
+  // Enemies
+  enemies.forEach(e=>{
+    if(e.flash>0) e.flash--;
+    const dx=PL.x-e.x, dy=PL.y-e.y, dist=Math.hypot(dx,dy);
+
+    // Grievous: charge attack
+    if(m.enemyType==='grievous'){
+      e.saberSpin+=0.08;
+      e.chargeTimer++;
+      if(e.chargeTimer===100&&!e.charging){
+        notify('⚔️ Grievous greift an! Weiche aus!');
+        e.chargeDx=dx/dist*6; e.chargeDy=dy/dist*6;
+        e.charging=true; e.chargeLeft=28;
+      }
+      if(e.charging){
+        e.x+=e.chargeDx; e.y+=e.chargeDy; e.chargeLeft--;
+        if(e.chargeLeft<=0){e.charging=false;e.chargeTimer=0;}
+        if(PL.invuln===0&&Math.hypot(PL.x-e.x,PL.y-e.y)<e.r+PL.radius){
+          PL.hp=Math.max(0,PL.hp-18); PL.invuln=40;
+          if(PL.hp===0){scene='dead';return;}
+        }
+        return;
+      }
+    }
+
+    if(dist>e.r+PL.radius*0.8) { e.x+=dx/dist*e.spd; e.y+=dy/dist*e.spd; }
+    e.x=Math.max(e.r,Math.min(W-e.r,e.x));
+    e.y=Math.max(PLAY_TOP+e.r,Math.min(PLAY_BOT-e.r,e.y));
+
+    // Shoot blaster
+    if(m.enemyType!=='grievous'){
+      e.shootCool++;
+      if(e.shootCool>=e.shootInterval&&dist<280){
+        e.shootCool=0;
+        const a=Math.atan2(PL.y-e.y,PL.x-e.x)+((Math.random()-0.5)*0.3);
+        bolts.push({x:e.x,y:e.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,angle:a,
+          col:'#ef4444',dmg:e.dmg,reflected:false,life:100,fromEnemy:e});
+      }
+    }
+
+    // Melee attack
+    if(e.atkCool>0) e.atkCool--;
+    if(dist<e.r+PL.radius+8&&e.atkCool===0){
+      e.atkCool=80;
+      if(PL.invuln===0){PL.hp=Math.max(0,PL.hp-e.dmg);PL.invuln=30;}
+      if(PL.hp===0){scene='dead';return;}
+    }
+
+    // Defend: attack objective
+    if(m.type==='defend'&&objective&&Math.hypot(objective.x-e.x,objective.y-e.y)<e.r+22&&e.atkCool===0){
+      e.atkCool=70; objective.hp=Math.max(0,(objective.hp||100)-10);
+      if(objective.hp<=0){notify('💀 Der Senat ist gefallen!');scene='dead';}
+    }
+  });
+
+  // Kill tracking
+  enemies=enemies.filter(e=>{if(e.hp<=0){killCount++;return false;}return true;});
+  if(PL.invuln>0) PL.invuln--;
+
+  // Defend timer
+  if(m.type==='defend'){defendTick++;if(defendTick>=60){defendTick=0;defendTimer++;}}
+
+  // Spawn
+  if(m.type!=='boss'||enemies.length===0){
+    const remaining=m.target-killCount;
+    if(remaining>0&&!missionDone()){
+      spawnTimer++;
+      const interval=m.type==='boss'?9999:m.type==='defend'?80:70;
+      if(spawnTimer>=interval){spawnTimer=0;spawnEnemy();}
+      if(m.type==='boss'&&enemies.length===0)spawnEnemy();
+    }
+  }
+
+  if(notifyTimer>0) notifyTimer--;
+
+  if(!advancing&&missionDone()&&(m.type==='defend'||enemies.length===0)){
+    advancing=true;
+    setTimeout(()=>nextMission(),700);
+  }
+}
+
+function nextMission(){
+  if(mIdx<MISSIONS.length-1){
+    mIdx++; resetState();
+    const m=mission();
+    if(m.type==='defend') objective={x:W/2,y:PLAY_TOP+PLAY_H/2,hp:100,maxHp:100};
+    notify(`✅ ${m.title}`);
+    scene='transition';
+  } else { scene='win'; }
+}
+
+function resetState(){
+  killCount=0;enemies=[];bolts=[];forceWaves=[];spawnTimer=0;advancing=false;
+  defendTimer=0;defendTick=0;objective=null;
+  PL.x=350;PL.y=PLAY_TOP+PLAY_H/2;PL.hp=PL.maxHp;PL.invuln=0;PL.atkCool=0;PL.forceCool=0;
+}
+
+function notify(t){notification=t;notifyTimer=220;}
+
+// ── DRAW CHARACTERS ──
+function drawDroid(e,bodyCol,darkCol,big=false){
+  const r=e.r, x=e.x, y=e.y;
+  ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(x,y+r*0.95,r*0.7,r*0.2,0,0,Math.PI*2); ctx.fill();
+  // Legs
+  ctx.fillStyle=darkCol;
+  ctx.beginPath(); ctx.roundRect(x-r*0.3,y+r*0.2,r*0.25,r*0.75,3); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(x+r*0.05,y+r*0.2,r*0.25,r*0.75,3); ctx.fill();
+  // Body
+  ctx.fillStyle=bodyCol;
+  ctx.beginPath(); ctx.roundRect(x-r*0.5,y-r*0.5,r,r*0.75,5); ctx.fill();
+  // Arms
+  ctx.fillStyle=bodyCol;
+  ctx.beginPath(); ctx.roundRect(x-r*0.78,y-r*0.42,r*0.3,r*0.5,3); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(x+r*0.48,y-r*0.42,r*0.3,r*0.5,3); ctx.fill();
+  // Blaster
+  ctx.fillStyle=darkCol; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath(); ctx.roundRect(x+r*0.72,y-r*0.2,r*0.35,r*0.12,2); ctx.fill();
+  // Head (oval)
+  ctx.fillStyle=bodyCol; ctx.beginPath(); ctx.ellipse(x,y-r*0.75,r*0.38,r*0.4,0,0,Math.PI*2); ctx.fill();
+  // Eye visor
+  ctx.fillStyle=big?'#ef4444':'#ef4444';
+  ctx.beginPath(); ctx.roundRect(x-r*0.3,y-r*0.82,r*0.6,r*0.14,3); ctx.fill();
+  if(e.flash>0&&Math.floor(frameT/2)%2) ctx.globalAlpha=0.3;
+}
+
+function drawGrievous(e){
+  const x=e.x, y=e.y, r=e.r;
+  const spin=e.saberSpin||0;
+  // 4 lightsabers spinning
+  const saberCols=['#4ade80','#ef4444','#3b82f6','#a78bfa'];
+  saberCols.forEach((col,i)=>{
+    const a=spin+i*(Math.PI/2);
+    const sx=x+Math.cos(a)*r*1.4, sy=y+Math.sin(a)*r*1.4;
+    ctx.strokeStyle=col; ctx.lineWidth=4; ctx.lineCap='round';
+    ctx.shadowColor=col; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(x+Math.cos(a)*(r*1.4+32),y+Math.sin(a)*(r*1.4+32)); ctx.stroke();
+    ctx.shadowBlur=0;
+    // Handle
+    ctx.strokeStyle='#555'; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(x+Math.cos(a)*r,y+Math.sin(a)*r); ctx.lineTo(sx,sy); ctx.stroke();
+  });
+  // Body (cybernetic)
+  ctx.fillStyle='#2a2a3a'; ctx.beginPath(); ctx.ellipse(x,y,r*0.55,r*0.7,0,0,Math.PI*2); ctx.fill();
+  // Chest plate
+  ctx.fillStyle='#4a4a6a'; ctx.beginPath(); ctx.ellipse(x,y-r*0.1,r*0.4,r*0.45,0,0,Math.PI*2); ctx.fill();
+  // Head (skull-like)
+  ctx.fillStyle='#e8dcc8'; ctx.beginPath(); ctx.ellipse(x,y-r*0.75,r*0.38,r*0.35,0,0,Math.PI*2); ctx.fill();
+  // Eyes (glowing)
+  ctx.fillStyle='#ffd700'; ctx.shadowColor='#ffd700'; ctx.shadowBlur=10;
+  ctx.beginPath(); ctx.arc(x-r*0.15,y-r*0.8,4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+r*0.15,y-r*0.8,4,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+  // Cape
+  ctx.fillStyle='#1a1a2a'; ctx.beginPath();
+  ctx.moveTo(x-r*0.5,y); ctx.quadraticCurveTo(x-r*0.6,y+r*0.8,x,y+r*0.9);
+  ctx.quadraticCurveTo(x+r*0.6,y+r*0.8,x+r*0.5,y); ctx.fill();
+  // HP bar
+  const bw=r*3, bh=7, bx=x-bw/2, by=y-r-22;
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,4); ctx.fill();
+  const pct=e.hp/e.maxHp;
+  ctx.fillStyle=pct>0.5?'#22c55e':'#ef4444'; ctx.beginPath(); ctx.roundRect(bx,by,bw*pct,bh,4); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText('⚔️ General Grievous',x,by-4);
+}
+
+function drawObiWan(){
+  const x=PL.x, y=PL.y, r=PL.radius;
+  if(PL.invuln>0&&Math.floor(frameT/4)%2){ctx.globalAlpha=0.3;}
+
+  // Lightsaber (blue, extending in facing direction)
+  const saberA=PL.atkAnim>0?PL.atkAngle:PL.facing;
+  const saberLen=PL.atkAnim>0?62:42;
+  ctx.shadowColor='#3b82f6'; ctx.shadowBlur=18;
+  ctx.strokeStyle='#93c5fd'; ctx.lineWidth=5; ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(x+Math.cos(saberA)*r,y+Math.sin(saberA)*r);
+  ctx.lineTo(x+Math.cos(saberA)*(r+saberLen),y+Math.sin(saberA)*(r+saberLen));
+  ctx.stroke();
+  ctx.strokeStyle='#fff'; ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(x+Math.cos(saberA)*r,y+Math.sin(saberA)*r);
+  ctx.lineTo(x+Math.cos(saberA)*(r+saberLen),y+Math.sin(saberA)*(r+saberLen));
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  // Handle
+  ctx.strokeStyle='#888'; ctx.lineWidth=6;
+  ctx.beginPath();
+  ctx.moveTo(x+Math.cos(saberA+Math.PI)*4,y+Math.sin(saberA+Math.PI)*4);
+  ctx.lineTo(x+Math.cos(saberA)*r,y+Math.sin(saberA)*r);
+  ctx.stroke();
+
+  // Body (Jedi robe)
+  ctx.fillStyle='#5c4a2a'; ctx.beginPath(); ctx.ellipse(x,y,r*0.55,r*0.72,0,0,Math.PI*2); ctx.fill();
+  // Robe
+  ctx.fillStyle='#3a2e18'; ctx.beginPath();
+  ctx.moveTo(x-r*0.52,y); ctx.quadraticCurveTo(x-r*0.7,y+r*0.9,x,y+r*1.0);
+  ctx.quadraticCurveTo(x+r*0.7,y+r*0.9,x+r*0.52,y); ctx.fill();
+  // Belt
+  ctx.fillStyle='#8b6914'; ctx.fillRect(x-r*0.5,y-2,r,5);
+  // Head
+  ctx.fillStyle='#e8c88a'; ctx.beginPath(); ctx.arc(x,y-r*0.82,r*0.4,0,Math.PI*2); ctx.fill();
+  // Hair/beard (brown)
+  ctx.fillStyle='#8b6030'; ctx.beginPath(); ctx.arc(x,y-r*0.9,r*0.42,Math.PI,0); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x,y-r*0.62,r*0.22,r*0.16,0,0,Math.PI*2); ctx.fill(); // beard
+  // Eyes
+  ctx.fillStyle='#111';
+  ctx.beginPath(); ctx.arc(x-r*0.12,y-r*0.83,2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+r*0.12,y-r*0.83,2,0,Math.PI*2); ctx.fill();
+  // Force cool indicator
+  if(PL.forceCool>0){
+    ctx.strokeStyle='rgba(147,197,253,0.4)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(x,y,r+6,0,Math.PI*2*(1-PL.forceCool/60)); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+}
+
+// ── DRAW GAME ──
+function drawGame(){
+  const m=mission();
+  drawPlanetBg(m.planet);
+
+  // Objective (Senate)
+  if(m.type==='defend'&&objective){
+    const pct=objective.hp/objective.maxHp;
+    ctx.shadowColor='#ffd700'; ctx.shadowBlur=20+Math.sin(frameT*0.1)*5;
+    ctx.font='28px serif'; ctx.textAlign='center'; ctx.fillText('🏛️',objective.x,objective.y+8);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.roundRect(objective.x-34,objective.y+16,68,10,5); ctx.fill();
+    ctx.fillStyle='#ffd700'; ctx.beginPath(); ctx.roundRect(objective.x-34,objective.y+16,68*pct,10,5); ctx.fill();
+    ctx.fillStyle='#ffd700'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText('Senat',objective.x,objective.y+38);
+  }
+
+  // Force waves
+  forceWaves.forEach(f=>{
+    ctx.strokeStyle=`rgba(147,197,253,${1-f.r/f.maxR})`; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,Math.PI*2); ctx.stroke();
+  });
+
+  // Bolts
+  bolts.forEach(b=>{
+    ctx.shadowColor=b.col; ctx.shadowBlur=10;
+    ctx.fillStyle=b.col; ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(b.x,b.y,2,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0;
+  });
+
+  // Enemies
+  enemies.forEach(e=>{
+    ctx.save();
+    if(e.flash>0&&Math.floor(frameT/2)%2) ctx.globalAlpha=0.35;
+    e.draw(e); ctx.globalAlpha=1;
+    // Grievous charge telegraph
+    if(m.enemyType==='grievous'&&e.chargeTimer>75&&!e.charging){
+      ctx.fillStyle=`rgba(239,68,68,${(e.chargeTimer-75)/25*0.4})`;
+      ctx.beginPath(); ctx.arc(e.x,e.y,e.r+10,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  });
+
+  drawObiWan();
+
+  // Saber swing effect
+  if(PL.atkAnim>0){
+    const t=PL.atkAnim/12;
+    ctx.strokeStyle=`rgba(147,197,253,${t*0.7})`; ctx.lineWidth=2;
+    ctx.shadowColor='#3b82f6'; ctx.shadowBlur=8;
+    ctx.beginPath(); ctx.arc(PL.x,PL.y,PL.atkRange,PL.atkAngle-0.5,PL.atkAngle+0.5); ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+
+  if(PL.invuln>0&&Math.floor(frameT/3)%2){
+    ctx.fillStyle='rgba(255,0,0,0.06)'; ctx.fillRect(0,0,W,H);
+  }
+
+  drawTopBar(m);
+  drawBottomBar(m);
+
+  if(notifyTimer>0){
+    const a=Math.min(1,notifyTimer/20);
+    ctx.fillStyle=`rgba(0,0,0,${a*0.7})`; ctx.beginPath(); ctx.roundRect(W/2-260,H/2-28,520,52,10); ctx.fill();
+    ctx.fillStyle=`rgba(147,197,253,${a})`; ctx.font='bold 14px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText(notification,W/2,H/2+5);
+  }
+}
+
+function drawPlanetBg(planet){
+  if(planet==='geonosis'){
+    const g=ctx.createLinearGradient(0,PLAY_TOP,0,PLAY_BOT);
+    g.addColorStop(0,'#7c3f1a'); g.addColorStop(1,'#5c2a0a');
+    ctx.fillStyle=g; ctx.fillRect(0,PLAY_TOP,W,PLAY_H);
+    // Sand dunes
+    ctx.globalAlpha=0.3;
+    for(let i=0;i<6;i++){
+      ctx.fillStyle='#a0622a';
+      ctx.beginPath(); ctx.ellipse(i*130+60,PLAY_BOT-20,80,30,0,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+    // Rocks
+    ctx.globalAlpha=0.4;
+    [[100,180,'r'],[400,300,'r'],[600,160,'r'],[200,350,'r']].forEach(([x,y])=>{
+      ctx.fillStyle='#8b4510'; ctx.beginPath(); ctx.ellipse(x,y,25,18,0,0,Math.PI*2); ctx.fill();
+    });
+    ctx.globalAlpha=1;
+  } else if(planet==='coruscant'){
+    const g=ctx.createLinearGradient(0,PLAY_TOP,0,PLAY_BOT);
+    g.addColorStop(0,'#1a1a3b'); g.addColorStop(1,'#0a0a1a');
+    ctx.fillStyle=g; ctx.fillRect(0,PLAY_TOP,W,PLAY_H);
+    // City lights / windows
+    ctx.globalAlpha=0.25;
+    for(let i=0;i<30;i++){
+      const wx=(i*137)%W, wy=PLAY_TOP+30+(i*97)%(PLAY_H-60);
+      ctx.fillStyle=['#fbbf24','#38bdf8','#fff','#a78bfa'][i%4];
+      ctx.fillRect(wx,wy,6+i%8,4+i%6);
+    }
+    ctx.globalAlpha=1;
+    // Holographic Senate ring
+    ctx.strokeStyle='rgba(59,130,246,0.2)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(W/2,PLAY_TOP+PLAY_H/2,160,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2,PLAY_TOP+PLAY_H/2,100,0,Math.PI*2); ctx.stroke();
+  } else if(planet==='mustafar'){
+    const g=ctx.createLinearGradient(0,PLAY_TOP,0,PLAY_BOT);
+    g.addColorStop(0,'#1a0500'); g.addColorStop(0.6,'#3a0800'); g.addColorStop(1,'#7a1500');
+    ctx.fillStyle=g; ctx.fillRect(0,PLAY_TOP,W,PLAY_H);
+    // Lava rivers
+    ctx.globalAlpha=0.5;
+    ctx.strokeStyle='#f97316'; ctx.lineWidth=8;
+    ctx.shadowColor='#f97316'; ctx.shadowBlur=20;
+    ctx.beginPath(); ctx.moveTo(0,PLAY_TOP+60); ctx.quadraticCurveTo(200,PLAY_TOP+120,400,PLAY_TOP+70); ctx.quadraticCurveTo(600,PLAY_TOP+20,W,PLAY_TOP+80); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,PLAY_BOT-60); ctx.quadraticCurveTo(300,PLAY_BOT-30,600,PLAY_BOT-80); ctx.stroke();
+    ctx.shadowBlur=0; ctx.globalAlpha=1;
+    // Ember particles
+    for(let i=0;i<8;i++){
+      ctx.fillStyle=`rgba(249,115,22,${0.3+Math.sin(frameT*0.05+i)*0.2})`;
+      ctx.beginPath(); ctx.arc((i*83+frameT)%W,PLAY_TOP+30+(i*47)%(PLAY_H-60),3,0,Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+function drawTopBar(m){
+  ctx.fillStyle='rgba(0,0,0,0.88)'; ctx.fillRect(0,0,W,62);
+  const pCol=m.planet==='geonosis'?'#7c3f1a':m.planet==='coruscant'?'#1a1a6b':'#5a0a00';
+  ctx.fillStyle=pCol; ctx.beginPath(); ctx.roundRect(6,6,190,50,8); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold 13px Segoe UI'; ctx.textAlign='left';
+  ctx.fillText(m.label,14,26); ctx.font='11px Segoe UI'; ctx.fillStyle='#94a3b8';
+  ctx.fillText(m.title,14,44);
+  ctx.textAlign='right';
+  if(m.type==='defend'){
+    ctx.fillStyle='rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.roundRect(W-150,10,142,42,8); ctx.fill();
+    ctx.fillStyle='#38bdf8'; ctx.font='bold 20px Segoe UI';
+    ctx.fillText(`⏱ ${Math.max(0,m.target-defendTimer)}s`,W-10,38);
+  } else {
+    ctx.fillStyle='rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.roundRect(W-170,10,162,42,8); ctx.fill();
+    ctx.fillStyle='#93c5fd'; ctx.font='bold 20px Segoe UI';
+    ctx.fillText(`${killCount} / ${m.target} ⚔️`,W-10,38);
+  }
+  // Planet dots
+  MISSIONS.forEach((mm,i)=>{
+    const ci=MISSIONS.indexOf(m);
+    ctx.fillStyle=i<ci?'#22c55e':i===ci?'#93c5fd':'rgba(255,255,255,0.2)';
+    ctx.beginPath(); ctx.arc(210+i*24,32,7,0,Math.PI*2); ctx.fill();
+  });
+}
+
+function drawBottomBar(m){
+  ctx.fillStyle='rgba(0,0,0,0.85)'; ctx.fillRect(0,PLAY_BOT,W,H-PLAY_BOT);
+  ctx.textAlign='left'; ctx.font='bold 11px Segoe UI'; ctx.fillStyle='#94a3b8';
+  ctx.fillText('❤️ HP',10,PLAY_BOT+17);
+  ctx.fillStyle='rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.roundRect(10,PLAY_BOT+22,180,13,6); ctx.fill();
+  const hpPct=PL.hp/PL.maxHp;
+  if(hpPct>0){ctx.fillStyle=hpPct>0.6?'#22c55e':hpPct>0.3?'#f59e0b':'#ef4444'; ctx.beginPath(); ctx.roundRect(10,PLAY_BOT+22,180*hpPct,13,6); ctx.fill();}
+  ctx.fillStyle='#fff'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText(`${PL.hp}/${PL.maxHp}`,100,PLAY_BOT+32);
+  ctx.fillStyle='#94a3b8'; ctx.font='12px Segoe UI'; ctx.textAlign='center';
+  ctx.fillText(`📜 ${m.desc}`,W/2,PLAY_BOT+20);
+  if(m.note){ctx.fillStyle='#475569'; ctx.font='10px Segoe UI'; ctx.fillText(m.note,W/2,PLAY_BOT+36);}
+  ctx.fillStyle='#1e2a3a'; ctx.font='10px Segoe UI'; ctx.textAlign='right';
+  ctx.fillText('Leertaste=Angriff  Q=Machtschub',W-10,PLAY_BOT+32);
+  // Force cooldown
+  if(PL.forceCool>0){
+    ctx.fillStyle='#93c5fd'; ctx.font='bold 10px Segoe UI'; ctx.textAlign='right';
+    ctx.fillText(`⚡ Macht: ${Math.ceil(PL.forceCool/60*100)}%`,W-10,PLAY_BOT+44);
+  }
+}
+
+// ── MENU / TRANSITION / WIN / DEAD ──
+let transT=0;
+function drawMenu(){
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+  // Stars
+  for(let i=0;i<120;i++){
+    ctx.fillStyle=`rgba(255,255,255,${0.3+Math.sin(frameT*0.02+i)*0.3})`;
+    ctx.beginPath(); ctx.arc((i*173)%W,(i*113)%H,Math.random()<0.1?2:1,0,Math.PI*2); ctx.fill();
+  }
+  ctx.textAlign='center';
+  ctx.font='44px Segoe UI'; ctx.shadowColor='#3b82f6'; ctx.shadowBlur=20;
+  ctx.fillText('⚔️',W/2,95); ctx.shadowBlur=0;
+  ctx.font='bold 26px Segoe UI';
+  const tg=ctx.createLinearGradient(W/2-160,0,W/2+160,0);
+  tg.addColorStop(0,'#facc15'); tg.addColorStop(0.5,'#3b82f6'); tg.addColorStop(1,'#facc15');
+  ctx.fillStyle=tg; ctx.fillText("Noel's Star Wars",W/2,146);
+  ctx.font='12px Segoe UI'; ctx.fillStyle='#64748b';
+  ctx.fillText('Als Obi-Wan Kenobi durch 3 Planeten kämpfen!',W/2,172);
+
+  [['🏜️','Geonosis','Droiden besiegen','#f59e0b'],
+   ['🌆','Coruscant','Senat schützen','#3b82f6'],
+   ['🌋','Mustafar','Boss-Duell','#ef4444']].forEach(([icon,name,sub,col],i)=>{
+    const x=W/2-180+i*180;
+    ctx.fillStyle='rgba(255,255,255,0.05)'; ctx.beginPath(); ctx.roundRect(x-70,192,140,88,10); ctx.fill();
+    ctx.strokeStyle=col+'44'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(x-70,192,140,88,10); ctx.stroke();
+    ctx.font='24px Segoe UI'; ctx.fillText(icon,x,226);
+    ctx.font='bold 12px Segoe UI'; ctx.fillStyle=col; ctx.fillText(name,x,250);
+    ctx.font='10px Segoe UI'; ctx.fillStyle='#94a3b8'; ctx.fillText(sub,x,268);
+  });
+
+  const pulse=Math.sin(frameT*0.07)*5;
+  ctx.fillStyle='rgba(59,130,246,0.15)'; ctx.beginPath(); ctx.roundRect(W/2-130,300+pulse,260,52,14); ctx.fill();
+  ctx.strokeStyle='#3b82f6'; ctx.lineWidth=2; ctx.beginPath(); ctx.roundRect(W/2-130,300+pulse,260,52,14); ctx.stroke();
+  ctx.font='bold 17px Segoe UI'; ctx.fillStyle='#93c5fd';
+  ctx.fillText('⚔️  Möge die Macht mit dir sein!',W/2,333+pulse);
+  ctx.font='11px Segoe UI'; ctx.fillStyle='#1e293b';
+  ctx.fillText('WASD/Pfeile=Bewegen  Leertaste=Angriff  Q=Machtschub',W/2,385);
+  cv.onclick=()=>{ startGame(); cv.onclick=null; };
+}
+
+function startGame(){
+  mIdx=0; resetState(); scene='game';
+  const m=mission();
+  if(m.type==='defend') objective={x:W/2,y:PLAY_TOP+PLAY_H/2,hp:100,maxHp:100};
+  notify(`⚔️ ${m.title} — ${m.desc}`);
+  spawnEnemy();
+}
+
+function drawTransition(){
+  transT++;
+  ctx.fillStyle='rgba(0,0,0,0.95)'; ctx.fillRect(0,0,W,H);
+  for(let i=0;i<60;i++){
+    ctx.fillStyle=`rgba(255,255,255,${0.1+Math.sin(frameT*0.04+i)*0.1})`;
+    ctx.beginPath(); ctx.arc((i*173)%W,(i*113)%H,1,0,Math.PI*2); ctx.fill();
+  }
+  const t=Math.min(1,transT/80);
+  const prev=MISSIONS[mIdx-1], nxt=mission();
+  ctx.textAlign='center'; ctx.globalAlpha=t;
+  ctx.font='36px serif';
+  ctx.fillText(prev.label+' → '+nxt.label,W/2,H/2-40);
+  ctx.font='bold 18px Segoe UI'; ctx.fillStyle='#93c5fd';
+  ctx.fillText(nxt.title,W/2,H/2);
+  ctx.font='12px Segoe UI'; ctx.fillStyle='#475569';
+  ctx.fillText('Klicke um weiterzumachen…',W/2,H/2+40);
+  ctx.globalAlpha=1;
+  if(t>=0.8){
+    cv.onclick=()=>{
+      cv.onclick=null; transT=0;
+      const m=mission();
+      if(m.type==='defend') objective={x:W/2,y:PLAY_TOP+PLAY_H/2,hp:100,maxHp:100};
+      enemies=[]; bolts=[]; spawnTimer=0;
+      notify(`${m.label}: ${m.title}`);
+      scene='game'; spawnEnemy();
+    };
+  }
+}
+
+function drawDead(){
+  ctx.fillStyle='rgba(30,0,0,0.94)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.font='64px serif'; ctx.fillText('💀',W/2,H/2-55);
+  ctx.font='bold 22px Segoe UI'; ctx.fillStyle='#ef4444'; ctx.fillText('Obi-Wan ist gefallen!',W/2,H/2);
+  ctx.font='14px Segoe UI'; ctx.fillStyle='#94a3b8'; ctx.fillText('Klicke zum Weitermachen…',W/2,H/2+40);
+  cv.onclick=()=>{
+    cv.onclick=null; resetState();
+    const m=mission();
+    if(m.type==='defend') objective={x:W/2,y:PLAY_TOP+PLAY_H/2,hp:100,maxHp:100};
+    scene='game'; spawnEnemy();
+    notify(`🔄 Nochmal: ${m.desc}`);
+  };
+}
+
+function drawWin(){
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+  for(let i=0;i<100;i++){
+    const x=(i*137+frameT*2)%W, y=((i*97+frameT)%H);
+    ctx.fillStyle=['#facc15','#3b82f6','#fff','#93c5fd'][i%4];
+    ctx.beginPath(); ctx.arc(x,y,2+Math.sin(i)*1.5,0,Math.PI*2); ctx.fill();
+  }
+  ctx.textAlign='center';
+  ctx.font='60px Segoe UI'; ctx.shadowColor='#facc15'; ctx.shadowBlur=20;
+  ctx.fillText('🏆',W/2,110); ctx.shadowBlur=0;
+  ctx.font='bold 24px Segoe UI';
+  const tg=ctx.createLinearGradient(W/2-150,0,W/2+150,0);
+  tg.addColorStop(0,'#facc15'); tg.addColorStop(1,'#3b82f6');
+  ctx.fillStyle=tg; ctx.fillText('Noel hat die Galaxis gerettet!',W/2,164);
+  ctx.font='13px Segoe UI'; ctx.fillStyle='#94a3b8';
+  ctx.fillText('General Grievous besiegt — die Republik ist sicher!',W/2,196);
+  ['🏜️ Geonosis: Droiden besiegt','🌆 Coruscant: Senat geschützt','🌋 Mustafar: Grievous besiegt'].forEach((t,i)=>{
+    ctx.fillStyle='#22c55e'; ctx.font='12px Segoe UI'; ctx.fillText('✓ '+t,W/2,230+i*24);
+  });
+  const pulse=Math.sin(frameT*0.07)*4;
+  ctx.fillStyle='rgba(59,130,246,0.15)'; ctx.beginPath(); ctx.roundRect(W/2-110,318+pulse,220,48,12); ctx.fill();
+  ctx.strokeStyle='#3b82f6'; ctx.lineWidth=2; ctx.beginPath(); ctx.roundRect(W/2-110,318+pulse,220,48,12); ctx.stroke();
+  ctx.font='bold 14px Segoe UI'; ctx.fillStyle='#93c5fd';
+  ctx.fillText('🔄 Nochmal spielen',W/2,348+pulse);
+  cv.onclick=()=>{ cv.onclick=null; mIdx=0; frameT=0; scene='menu'; };
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  frameT++;
+  ctx.clearRect(0,0,W,H);
+  if(scene==='menu')       drawMenu();
+  else if(scene==='game')  { update(); drawGame(); }
+  else if(scene==='transition') drawTransition();
+  else if(scene==='dead')  drawDead();
+  else if(scene==='win')   drawWin();
+}
+loop();
+</script>
+</body>
+</html>
