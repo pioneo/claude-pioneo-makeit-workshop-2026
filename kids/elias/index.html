@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>✨ Anime Snake ✨</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=M+PLUS+Rounded+1c:wght@400;700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'M PLUS Rounded 1c', 'Segoe UI', sans-serif;
+      background: #0d0221;
+      color: #f0e6ff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      gap: 1rem;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    /* ── Animated starfield background ── */
+    #bg-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .page-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    /* ── Title ── */
+    .title { text-align: center; }
+    .title h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.6rem, 5vw, 2.4rem);
+      font-weight: 900;
+      background: linear-gradient(135deg, #ff6eb4 0%, #c084fc 40%, #67e8f9 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 0 18px rgba(192,132,252,0.7));
+      letter-spacing: 0.05em;
+    }
+    .title p {
+      font-size: 0.82rem;
+      color: #a78bfa;
+      margin-top: 0.25rem;
+      letter-spacing: 0.1em;
+    }
+
+    /* ── Stats ── */
+    .stats { display: flex; gap: 0.8rem; }
+    .stat-box {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(192,132,252,0.3);
+      border-radius: 14px;
+      padding: 0.5rem 1.1rem;
+      text-align: center;
+      min-width: 90px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 0 20px rgba(192,132,252,0.1), inset 0 1px 0 rgba(255,255,255,0.07);
+    }
+    .stat-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #a78bfa;
+    }
+    .stat-value {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #f9a8d4, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.3;
+    }
+
+    /* ── Canvas ── */
+    .canvas-wrap {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1.5px solid rgba(192,132,252,0.4);
+      box-shadow:
+        0 0 0 1px rgba(255,110,180,0.1),
+        0 0 40px rgba(192,132,252,0.25),
+        0 0 80px rgba(192,132,252,0.1),
+        0 24px 64px rgba(0,0,0,0.7);
+    }
+
+    canvas#canvas { display: block; }
+
+    /* ── Overlay ── */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.9rem;
+      background: rgba(13,2,33,0.82);
+      backdrop-filter: blur(10px);
+    }
+    .overlay.hidden { display: none; }
+
+    .overlay-icon { font-size: 3.8rem; filter: drop-shadow(0 0 16px rgba(255,110,180,0.8)); }
+
+    .overlay-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.8rem;
+      font-weight: 900;
+      background: linear-gradient(135deg, #ff6eb4, #c084fc, #67e8f9);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 0 12px rgba(192,132,252,0.6));
+    }
+
+    .overlay-score {
+      font-size: 0.9rem;
+      color: #a78bfa;
+      letter-spacing: 0.05em;
+    }
+    .overlay-score span { color: #f9a8d4; font-weight: 700; }
+
+    .overlay-hint {
+      font-size: 0.75rem;
+      color: #7c3aed;
+      margin-top: -0.2rem;
+      letter-spacing: 0.06em;
+    }
+
+    .btn-start {
+      padding: 0.75rem 2.4rem;
+      background: linear-gradient(135deg, #9333ea, #ec4899);
+      color: white;
+      border: none;
+      border-radius: 50px;
+      font-size: 1rem;
+      font-weight: 800;
+      cursor: pointer;
+      font-family: 'M PLUS Rounded 1c', sans-serif;
+      letter-spacing: 0.05em;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 4px 24px rgba(236,72,153,0.45), 0 0 0 1px rgba(255,255,255,0.1);
+    }
+    .btn-start:hover {
+      transform: translateY(-3px) scale(1.03);
+      box-shadow: 0 8px 32px rgba(236,72,153,0.6), 0 0 20px rgba(192,132,252,0.4);
+    }
+    .btn-start:active { transform: scale(0.98); }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex;
+      gap: 0.4rem;
+      align-items: center;
+      font-size: 0.72rem;
+      color: #6d28d9;
+      letter-spacing: 0.05em;
+    }
+    .key {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(192,132,252,0.25);
+      border-radius: 5px;
+      padding: 0.15rem 0.45rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #c084fc;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<div class="page-content">
+  <div class="title">
+    <h1>✨ ANIME SNAKE ✨</h1>
+    <p>アニメスネーク — Friss die Orbs!</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat-box">
+      <div class="stat-label">Punkte</div>
+      <div class="stat-value" id="score">0</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Highscore</div>
+      <div class="stat-value" id="highscore">0</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Level</div>
+      <div class="stat-value" id="level">1</div>
+    </div>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="canvas"></canvas>
+
+    <div class="overlay" id="overlay">
+      <div class="overlay-icon" id="overlayIcon">🌸</div>
+      <div class="overlay-title" id="overlayTitle">ANIME SNAKE</div>
+      <div class="overlay-score" id="overlayScore" style="display:none">
+        Punkte: <span id="finalScore">0</span> &nbsp;✦&nbsp; Best: <span id="finalHigh">0</span>
+      </div>
+      <button class="btn-start" id="btnStart" onclick="startGame()">▶ Spiel starten</button>
+      <div class="overlay-hint" id="overlayHint">✦ Pfeiltasten oder WASD ✦</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <span class="key">↑</span><span class="key">↓</span><span class="key">←</span><span class="key">→</span>
+    &nbsp;oder&nbsp;
+    <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span>
+  </div>
+</div>
+
+<script>
+// ── Background: stars + sakura petals ──────────────────────────────
+const bgC  = document.getElementById('bg-canvas');
+const bgCtx = bgC.getContext('2d');
+let W, H, stars, petals;
+
+function resizeBg() {
+  W = bgC.width  = window.innerWidth;
+  H = bgC.height = window.innerHeight;
+}
+
+function initBg() {
+  resizeBg();
+  stars = Array.from({length: 120}, () => ({
+    x: Math.random() * W, y: Math.random() * H,
+    r: Math.random() * 1.5 + 0.3,
+    a: Math.random(),
+    speed: Math.random() * 0.008 + 0.003,
+    phase: Math.random() * Math.PI * 2
+  }));
+  petals = Array.from({length: 18}, () => makePetal());
+}
+
+function makePetal() {
+  return {
+    x: Math.random() * W, y: -20,
+    size: Math.random() * 8 + 5,
+    rot: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 0.04,
+    vx: (Math.random() - 0.5) * 0.6,
+    vy: Math.random() * 0.8 + 0.3,
+    alpha: Math.random() * 0.5 + 0.3,
+    hue: Math.floor(Math.random() * 3) * 30  // 0=pink, 30=rose, 60=light
+  };
+}
+
+function drawBg(t) {
+  bgCtx.clearRect(0, 0, W, H);
+
+  // Deep space gradient
+  const grad = bgCtx.createRadialGradient(W*0.3, H*0.2, 0, W*0.5, H*0.5, W*0.8);
+  grad.addColorStop(0, '#1a0533');
+  grad.addColorStop(0.5, '#0d0221');
+  grad.addColorStop(1, '#050010');
+  bgCtx.fillStyle = grad;
+  bgCtx.fillRect(0, 0, W, H);
+
+  // Stars
+  stars.forEach(s => {
+    s.a = 0.4 + 0.6 * Math.abs(Math.sin(t * s.speed + s.phase));
+    bgCtx.beginPath();
+    bgCtx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    bgCtx.fillStyle = `rgba(200,180,255,${s.a})`;
+    bgCtx.fill();
+  });
+
+  // Sakura petals
+  petals.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.rot += p.rotSpeed;
+    if (p.y > H + 30) Object.assign(p, makePetal(), {x: Math.random()*W, y: -20});
+
+    bgCtx.save();
+    bgCtx.translate(p.x, p.y);
+    bgCtx.rotate(p.rot);
+    bgCtx.globalAlpha = p.alpha;
+
+    // Petal shape
+    bgCtx.beginPath();
+    bgCtx.ellipse(0, 0, p.size, p.size * 0.6, 0, 0, Math.PI*2);
+    const colors = ['#ffb7d5','#ff8fb8','#ffc8dd'];
+    bgCtx.fillStyle = colors[p.hue/30 | 0] || '#ffb7d5';
+    bgCtx.fill();
+
+    bgCtx.restore();
+    bgCtx.globalAlpha = 1;
+  });
+}
+
+let bgFrame = 0;
+function animateBg() {
+  bgFrame++;
+  drawBg(bgFrame);
+  requestAnimationFrame(animateBg);
+}
+
+window.addEventListener('resize', resizeBg);
+initBg();
+animateBg();
+
+
+// ── GAME ──────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+const GRID = 22;
+const COLS = 24;
+const ROWS = 22;
+canvas.width  = GRID * COLS;
+canvas.height = GRID * ROWS;
+
+let snake, dir, nextDir, food, bonus, score, highscore, level, speed, loop, running;
+highscore = 0;
+bonus = null;
+
+// Particles
+let particles = [];
+
+function addParticles(gx, gy, color, count=6) {
+  const px = gx * GRID + GRID/2;
+  const py = gy * GRID + GRID/2;
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
+    particles.push({
+      x: px, y: py,
+      vx: Math.cos(angle) * (2 + Math.random() * 3),
+      vy: Math.sin(angle) * (2 + Math.random() * 3),
+      r: 2 + Math.random() * 3,
+      alpha: 1,
+      color,
+      life: 1
+    });
+  }
+}
+
+function updateParticles() {
+  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.88; p.vy *= 0.88;
+    p.life -= 0.06;
+    p.alpha = p.life;
+  });
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur  = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+function startGame() {
+  snake   = [{x:12,y:11},{x:11,y:11},{x:10,y:11}];
+  dir     = {x:1,y:0};
+  nextDir = {x:1,y:0};
+  score   = 0;
+  level   = 1;
+  speed   = 130;
+  bonus   = null;
+  running = true;
+  particles = [];
+
+  document.getElementById('overlay').classList.add('hidden');
+  document.getElementById('score').textContent = 0;
+  document.getElementById('level').textContent = 1;
+
+  placeFood();
+  clearInterval(loop);
+  loop = setInterval(tick, speed);
+  requestAnimationFrame(gameLoop);
+}
+
+function placeFood() {
+  let pos;
+  do {
+    pos = {x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS)};
+  } while (snake.some(s => s.x===pos.x && s.y===pos.y));
+  food = pos;
+
+  if (score > 5 && Math.random() < 0.25) spawnBonus();
+}
+
+function spawnBonus() {
+  let pos;
+  do {
+    pos = {x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS)};
+  } while (
+    snake.some(s=>s.x===pos.x && s.y===pos.y) ||
+    (food && pos.x===food.x && pos.y===food.y)
+  );
+  bonus = {x:pos.x, y:pos.y, ttl:70, age:0};
+}
+
+function tick() {
+  dir = {...nextDir};
+  const head = {x: snake[0].x+dir.x, y: snake[0].y+dir.y};
+
+  if (head.x<0||head.x>=COLS||head.y<0||head.y>=ROWS) return gameOver();
+  if (snake.some(s=>s.x===head.x&&s.y===head.y)) return gameOver();
+
+  snake.unshift(head);
+
+  if (head.x===food.x && head.y===food.y) {
+    score++;
+    addParticles(head.x, head.y, '#f9a8d4', 8);
+    updateLevel();
+    placeFood();
+  } else if (bonus && head.x===bonus.x && head.y===bonus.y) {
+    score += 3;
+    addParticles(head.x, head.y, '#fde68a', 12);
+    bonus = null;
+    updateLevel();
+  } else {
+    snake.pop();
+  }
+
+  if (bonus) {
+    bonus.ttl--;
+    bonus.age++;
+    if (bonus.ttl<=0) bonus=null;
+  }
+
+  document.getElementById('score').textContent = score;
+}
+
+function updateLevel() {
+  const nl = Math.min(10, Math.floor(score/5)+1);
+  if (nl!==level) {
+    level = nl;
+    document.getElementById('level').textContent = level;
+    clearInterval(loop);
+    speed = Math.max(50, 130-(level-1)*10);
+    loop  = setInterval(tick, speed);
+  }
+}
+
+let animT = 0;
+function gameLoop() {
+  if (!running) return;
+  animT++;
+  updateParticles();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function draw() {
+  const t = Date.now();
+
+  // ── Background ──
+  const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  bg.addColorStop(0, '#0d0221');
+  bg.addColorStop(1, '#130330');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grid dots
+  for (let x=0; x<COLS; x++) {
+    for (let y=0; y<ROWS; y++) {
+      ctx.beginPath();
+      ctx.arc(x*GRID+GRID/2, y*GRID+GRID/2, 0.8, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(167,139,250,0.15)';
+      ctx.fill();
+    }
+  }
+
+  // ── Food: glowing pink orb ──
+  drawOrb(food.x, food.y, '#ff6eb4', '#fda4d4', t);
+
+  // ── Bonus: golden star orb ──
+  if (bonus) {
+    const pulse = 0.65 + 0.35 * Math.sin(t/100);
+    ctx.globalAlpha = pulse;
+    drawOrb(bonus.x, bonus.y, '#fbbf24', '#fde68a', t, true);
+    ctx.globalAlpha = 1;
+  }
+
+  // ── Snake ──
+  // Draw body first (back to front)
+  for (let i=snake.length-1; i>=0; i--) {
+    drawSnakeSeg(snake[i], i, t);
+  }
+
+  // ── Particles ──
+  drawParticles();
+}
+
+function drawOrb(gx, gy, col, shine, t, star=false) {
+  const cx = gx*GRID+GRID/2;
+  const cy = gy*GRID+GRID/2;
+  const r  = GRID/2-3;
+  const pulse = 1 + 0.08*Math.sin(t/180);
+
+  // Outer glow
+  ctx.save();
+  ctx.shadowColor = col;
+  ctx.shadowBlur  = 20;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r*pulse, 0, Math.PI*2);
+  ctx.fillStyle = col;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Inner shine
+  const grad = ctx.createRadialGradient(cx-r*0.3, cy-r*0.3, 0, cx, cy, r*pulse);
+  grad.addColorStop(0, 'rgba(255,255,255,0.6)');
+  grad.addColorStop(0.4, col+'99');
+  grad.addColorStop(1, col+'22');
+  ctx.beginPath();
+  ctx.arc(cx, cy, r*pulse, 0, Math.PI*2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Star sparkles around bonus
+  if (star) {
+    for (let k=0; k<4; k++) {
+      const a = (t/80) + k*Math.PI/2;
+      const sx = cx + Math.cos(a)*(r+5);
+      const sy = cy + Math.sin(a)*(r+5);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.5, 0, Math.PI*2);
+      ctx.fillStyle = '#fde68a';
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawSnakeSeg(seg, i, t) {
+  const total = snake.length;
+  const pct   = i / Math.max(total-1, 1);
+
+  // Color: head=pink→purple, tail=purple→indigo
+  const r = Math.round(lerp(249, 109, pct));  // f9a8d4 → 6d28d9
+  const g = Math.round(lerp(168, 40,  pct));
+  const b = Math.round(lerp(212, 217, pct));
+  const col = `rgb(${r},${g},${b})`;
+
+  const px = seg.x*GRID+1;
+  const py = seg.y*GRID+1;
+  const s  = GRID-2;
+
+  // Glow on head
+  if (i===0) {
+    ctx.save();
+    ctx.shadowColor = '#f9a8d4';
+    ctx.shadowBlur  = 18;
+  }
+
+  ctx.fillStyle = col;
+  roundRect(px, py, s, s, i===0 ? 8 : 5);
+  ctx.fill();
+
+  // Highlight stripe
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  roundRect(px+2, py+2, s*0.45, 3, 2);
+  ctx.fill();
+
+  if (i===0) {
+    ctx.restore();
+    drawAnimeEyes(seg, t);
+  }
+}
+
+function drawAnimeEyes(seg, t) {
+  const cx = seg.x*GRID+GRID/2;
+  const cy = seg.y*GRID+GRID/2;
+  const d  = 5;
+
+  const e1 = {x: cx+dir.y*d+dir.x*4, y: cy-dir.x*d+dir.y*4};
+  const e2 = {x: cx-dir.y*d+dir.x*4, y: cy+dir.x*d+dir.y*4};
+
+  [e1, e2].forEach(e => {
+    // White sclera
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, 3.2, 0, Math.PI*2);
+    ctx.fillStyle = 'white';
+    ctx.fill();
+
+    // Pupil (large anime-style)
+    ctx.beginPath();
+    ctx.arc(e.x+dir.x*0.6, e.y+dir.y*0.6, 2, 0, Math.PI*2);
+    ctx.fillStyle = '#2d1b69';
+    ctx.fill();
+
+    // Sparkle dot in eye
+    ctx.beginPath();
+    ctx.arc(e.x+dir.x*0.3-0.8, e.y+dir.y*0.3-0.8, 0.8, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fill();
+  });
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+function lerp(a, b, t) { return a+(b-a)*t; }
+
+function gameOver() {
+  clearInterval(loop);
+  running = false;
+  if (score>highscore) highscore=score;
+  document.getElementById('highscore').textContent = highscore;
+
+  // Death flash
+  ctx.fillStyle = 'rgba(236,72,153,0.2)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const overlay = document.getElementById('overlay');
+  overlay.classList.remove('hidden');
+  document.getElementById('overlayIcon').textContent  = score>=10 ? '🌟' : '💔';
+  document.getElementById('overlayTitle').textContent = score>=10 ? 'SUGOI!' : 'GAME OVER';
+  const sd = document.getElementById('overlayScore');
+  sd.style.display = 'block';
+  document.getElementById('finalScore').textContent = score;
+  document.getElementById('finalHigh').textContent  = highscore;
+  document.getElementById('btnStart').textContent   = '✨ Nochmal!';
+  document.getElementById('overlayHint').textContent = score>0 && score>=highscore
+    ? '🌸 Neuer Highscore! Sugoi! 🌸'
+    : '✦ Gambatte! Du schaffst das! ✦';
+}
+
+// ── Controls ──
+const dirMap = {
+  ArrowUp:{x:0,y:-1},w:{x:0,y:-1},W:{x:0,y:-1},
+  ArrowDown:{x:0,y:1},s:{x:0,y:1},S:{x:0,y:1},
+  ArrowLeft:{x:-1,y:0},a:{x:-1,y:0},A:{x:-1,y:0},
+  ArrowRight:{x:1,y:0},d:{x:1,y:0},D:{x:1,y:0},
+};
+
+document.addEventListener('keydown', e => {
+  const d = dirMap[e.key];
+  if (!d) return;
+  e.preventDefault();
+  if (!running) return;
+  if (d.x !== -dir.x || d.y !== -dir.y) nextDir = d;
+});
+
+let touchStart = null;
+canvas.addEventListener('touchstart', e=>{
+  touchStart = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+},{passive:true});
+canvas.addEventListener('touchend', e=>{
+  if(!touchStart||!running) return;
+  const dx=e.changedTouches[0].clientX-touchStart.x;
+  const dy=e.changedTouches[0].clientY-touchStart.y;
+  let d;
+  if(Math.abs(dx)>Math.abs(dy)) d=dx>0?{x:1,y:0}:{x:-1,y:0};
+  else d=dy>0?{x:0,y:1}:{x:0,y:-1};
+  if(d.x!==- dir.x||d.y!==-dir.y) nextDir=d;
+  touchStart=null;
+},{passive:true});
+
+// Initial blank draw
+ctx.fillStyle='#0d0221';
+ctx.fillRect(0,0,canvas.width,canvas.height);
+</script>
+</body>
+</html>
