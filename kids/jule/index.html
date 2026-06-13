@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jules Snake 🐍</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f0f1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: white;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.3rem;
+      background: linear-gradient(90deg, #a8ff78, #78ffd6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .top-bar {
+      display: flex;
+      gap: 2rem;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+      color: #aaa;
+    }
+
+    .top-bar span { color: white; font-weight: 700; }
+
+    canvas {
+      border: 3px solid #2a2a3a;
+      border-radius: 12px;
+      background: #111122;
+      display: block;
+    }
+
+    .overlay {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+    }
+
+    .overlay-box {
+      background: rgba(15,15,26,0.92);
+      border: 2px solid #2a2a4a;
+      border-radius: 16px;
+      padding: 2rem 3rem;
+      text-align: center;
+    }
+
+    .overlay-box h2 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+    .overlay-box p  { color: #aaa; margin-bottom: 1.2rem; }
+    .overlay-box .final-score { font-size: 2.5rem; font-weight: 900; color: #a8ff78; }
+
+    button {
+      background: linear-gradient(135deg, #a8ff78, #78ffd6);
+      color: #0f0f1a;
+      border: none;
+      border-radius: 10px;
+      padding: 0.7rem 2rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(168,255,120,0.4);
+    }
+
+    .hint {
+      margin-top: 0.8rem;
+      font-size: 0.8rem;
+      color: #555;
+    }
+
+    .wrapper {
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <h1>Jules Snake 🐍</h1>
+  <div class="top-bar">
+    Punkte: <span id="score">0</span>&nbsp;&nbsp; Highscore: <span id="highscore">0</span>
+  </div>
+
+  <div class="wrapper">
+    <canvas id="canvas" width="400" height="400"></canvas>
+
+    <div class="overlay" id="overlay" style="inset:0; position:absolute;">
+      <div class="overlay-box" id="startBox">
+        <h2>🐍 Bereit?</h2>
+        <p>Steuere die Schlange mit den Pfeiltasten<br>oder WASD und frisst so viele Äpfel wie möglich!</p>
+        <button onclick="startGame()">Los geht's!</button>
+        <div class="hint">Pfeiltasten · WASD · Swipe</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const GRID   = 20;
+const COLS   = canvas.width  / GRID;
+const ROWS   = canvas.height / GRID;
+
+let snake, dir, nextDir, food, score, highscore, running, loop;
+highscore = 0;
+
+function startGame() {
+  document.getElementById('overlay').style.display = 'none';
+  snake   = [{x: 10, y: 10}, {x: 9, y: 10}, {x: 8, y: 10}];
+  dir     = {x: 1, y: 0};
+  nextDir = {x: 1, y: 0};
+  score   = 0;
+  updateScore();
+  placeFood();
+  running = true;
+  clearInterval(loop);
+  loop = setInterval(tick, 120);
+}
+
+function placeFood() {
+  let pos;
+  do {
+    pos = {x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS)};
+  } while (snake.some(s => s.x === pos.x && s.y === pos.y));
+  food = pos;
+}
+
+function tick() {
+  dir = {...nextDir};
+  const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+
+  // Wall collision
+  if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
+    return gameOver();
+  }
+  // Self collision
+  if (snake.some(s => s.x === head.x && s.y === head.y)) {
+    return gameOver();
+  }
+
+  snake.unshift(head);
+
+  if (head.x === food.x && head.y === food.y) {
+    score++;
+    if (score > highscore) highscore = score;
+    updateScore();
+    placeFood();
+    // Speed up slightly every 5 points
+    if (score % 5 === 0) {
+      clearInterval(loop);
+      loop = setInterval(tick, Math.max(60, 120 - score * 3));
+    }
+  } else {
+    snake.pop();
+  }
+
+  draw();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Grid dots
+  ctx.fillStyle = '#1a1a2e';
+  for (let x = 0; x < COLS; x++) {
+    for (let y = 0; y < ROWS; y++) {
+      ctx.fillRect(x * GRID + GRID/2 - 1, y * GRID + GRID/2 - 1, 2, 2);
+    }
+  }
+
+  // Food (apple)
+  const fx = food.x * GRID + GRID/2;
+  const fy = food.y * GRID + GRID/2;
+  ctx.beginPath();
+  ctx.arc(fx, fy, GRID/2 - 2, 0, Math.PI * 2);
+  ctx.fillStyle = '#ff4757';
+  ctx.fill();
+  // Shine
+  ctx.beginPath();
+  ctx.arc(fx - 3, fy - 3, 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fill();
+
+  // Snake
+  snake.forEach((seg, i) => {
+    const t = i / snake.length;
+    // Gradient green
+    const r = Math.round(100 + t * 20);
+    const g = Math.round(220 - t * 60);
+    const b = Math.round(80  + t * 20);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+
+    const x = seg.x * GRID + 1;
+    const y = seg.y * GRID + 1;
+    const s = GRID - 2;
+    const radius = i === 0 ? 6 : 4;
+
+    ctx.beginPath();
+    ctx.roundRect(x, y, s, s, radius);
+    ctx.fill();
+
+    // Eyes on head
+    if (i === 0) {
+      ctx.fillStyle = 'white';
+      const ex1 = {x: seg.x * GRID + 6  + dir.y * 4, y: seg.y * GRID + 6  - dir.x * 4};
+      const ex2 = {x: seg.x * GRID + 14 + dir.y * 4, y: seg.y * GRID + 14 - dir.x * 4};
+      // Adjust for direction
+      const eyeOffset = 5;
+      const eyeA = {
+        x: seg.x * GRID + GRID/2 + dir.y * eyeOffset,
+        y: seg.y * GRID + GRID/2 - dir.x * eyeOffset
+      };
+      const eyeB = {
+        x: seg.x * GRID + GRID/2 - dir.y * eyeOffset,
+        y: seg.y * GRID + GRID/2 + dir.x * eyeOffset
+      };
+      [eyeA, eyeB].forEach(e => {
+        ctx.beginPath();
+        ctx.arc(e.x + dir.x * 4, e.y + dir.y * 4, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#111';
+        ctx.beginPath();
+        ctx.arc(e.x + dir.x * 4, e.y + dir.y * 4, 1.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'white';
+      });
+    }
+  });
+}
+
+function gameOver() {
+  clearInterval(loop);
+  running = false;
+  const overlay = document.getElementById('overlay');
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `
+    <div class="overlay-box">
+      <h2>💀 Game Over!</h2>
+      <div class="final-score">${score} Punkte</div>
+      <p style="margin-top:0.4rem">Highscore: ${highscore}</p>
+      <button onclick="startGame()" style="margin-top:0.5rem">Nochmal! 🔄</button>
+    </div>
+  `;
+}
+
+function updateScore() {
+  document.getElementById('score').textContent     = score;
+  document.getElementById('highscore').textContent = highscore;
+}
+
+// Keyboard controls
+document.addEventListener('keydown', e => {
+  const map = {
+    ArrowUp:    {x:0,y:-1}, w: {x:0,y:-1}, W: {x:0,y:-1},
+    ArrowDown:  {x:0,y:1},  s: {x:0,y:1},  S: {x:0,y:1},
+    ArrowLeft:  {x:-1,y:0}, a: {x:-1,y:0}, A: {x:-1,y:0},
+    ArrowRight: {x:1,y:0},  d: {x:1,y:0},  D: {x:1,y:0},
+  };
+  const d = map[e.key];
+  if (d && !(d.x === -dir.x && d.y === -dir.y)) {
+    nextDir = d;
+    e.preventDefault();
+  }
+});
+
+// Touch / Swipe controls
+let touchStart = null;
+canvas.addEventListener('touchstart', e => {
+  touchStart = {x: e.touches[0].clientX, y: e.touches[0].clientY};
+}, {passive: true});
+canvas.addEventListener('touchend', e => {
+  if (!touchStart) return;
+  const dx = e.changedTouches[0].clientX - touchStart.x;
+  const dy = e.changedTouches[0].clientY - touchStart.y;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    const d = dx > 0 ? {x:1,y:0} : {x:-1,y:0};
+    if (!(d.x === -dir.x)) nextDir = d;
+  } else {
+    const d = dy > 0 ? {x:0,y:1} : {x:0,y:-1};
+    if (!(d.y === -dir.y)) nextDir = d;
+  }
+  touchStart = null;
+}, {passive: true});
+
+// Initial draw
+ctx.fillStyle = '#111122';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+</script>
+</body>
+</html>
