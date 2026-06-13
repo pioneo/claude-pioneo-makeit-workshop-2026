@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Emilios Tic Tac Toe ❌⭕</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: #0f0c29;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #fff;
+      padding: 1rem;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: clamp(1.6rem, 5vw, 2.4rem);
+      font-weight: 900;
+      background: linear-gradient(135deg, #f97316, #fbbf24);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      filter: drop-shadow(0 0 12px rgba(251,191,36,0.4));
+      margin-bottom: 0.3rem; text-align: center;
+    }
+    .tagline { color: #94a3b8; font-size: 0.8rem; letter-spacing: 0.1em; margin-bottom: 1.5rem; }
+
+    /* Scoreboard */
+    .scores {
+      display: flex; gap: 1.5rem; margin-bottom: 1.4rem;
+    }
+    .score-box {
+      background: rgba(255,255,255,0.06);
+      border: 1.5px solid rgba(255,255,255,0.12);
+      border-radius: 14px; padding: 0.6rem 1.2rem;
+      text-align: center; min-width: 80px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .score-box.active-x { border-color: #f97316; box-shadow: 0 0 14px rgba(249,115,22,0.3); }
+    .score-box.active-o { border-color: #38bdf8; box-shadow: 0 0 14px rgba(56,189,248,0.3); }
+    .score-label { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.12em; color: #64748b; }
+    .score-symbol { font-size: 1.3rem; font-weight: 900; line-height: 1.1; }
+    .score-symbol.x { color: #f97316; }
+    .score-symbol.o { color: #38bdf8; }
+    .score-number { font-size: 1.5rem; font-weight: 900; }
+
+    /* Status banner */
+    .status {
+      font-size: clamp(1rem, 3vw, 1.25rem);
+      font-weight: 800; margin-bottom: 1.2rem;
+      min-height: 1.8rem; text-align: center;
+      transition: color 0.2s;
+    }
+    .status.x-turn  { color: #f97316; }
+    .status.o-turn  { color: #38bdf8; }
+    .status.win-x   { color: #fbbf24; }
+    .status.win-o   { color: #4ade80; }
+    .status.draw    { color: #a78bfa; }
+
+    /* Board */
+    .board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 1.4rem;
+    }
+    .cell {
+      width: clamp(90px, 22vw, 130px);
+      height: clamp(90px, 22vw, 130px);
+      background: rgba(255,255,255,0.05);
+      border: 2px solid rgba(255,255,255,0.1);
+      border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: clamp(2.5rem, 8vw, 4rem);
+      font-weight: 900;
+      cursor: pointer;
+      transition: background 0.12s, transform 0.1s, border-color 0.15s;
+      position: relative; overflow: hidden;
+    }
+    .cell:hover:not(.taken) {
+      background: rgba(255,255,255,0.1);
+      transform: scale(1.04);
+    }
+    .cell.taken { cursor: default; }
+    .cell.x { color: #f97316; border-color: rgba(249,115,22,0.35); }
+    .cell.o { color: #38bdf8; border-color: rgba(56,189,248,0.35); }
+    .cell.winning {
+      background: rgba(251,191,36,0.12);
+      border-color: #fbbf24;
+      box-shadow: 0 0 20px rgba(251,191,36,0.3);
+      animation: pulse 0.8s ease-in-out infinite alternate;
+    }
+    @keyframes pulse {
+      from { box-shadow: 0 0 10px rgba(251,191,36,0.2); }
+      to   { box-shadow: 0 0 28px rgba(251,191,36,0.5); }
+    }
+
+    /* Pop animation */
+    @keyframes pop {
+      0%   { transform: scale(0.4) rotate(-8deg); opacity: 0; }
+      70%  { transform: scale(1.15) rotate(3deg); }
+      100% { transform: scale(1) rotate(0deg); opacity: 1; }
+    }
+    .cell .mark { animation: pop 0.22s cubic-bezier(.34,1.56,.64,1) both; }
+
+    /* Particle burst */
+    .particle {
+      position: fixed; pointer-events: none;
+      font-size: 1.3rem; animation: fly 0.9s ease-out forwards;
+    }
+    @keyframes fly {
+      0%   { opacity:1; transform: translate(0,0) scale(1); }
+      100% { opacity:0; transform: translate(var(--dx), var(--dy)) scale(0.3); }
+    }
+
+    /* Buttons */
+    .btn-row { display: flex; gap: 0.7rem; }
+    button {
+      padding: 0.65rem 1.4rem; border-radius: 12px; border: none;
+      font-size: 0.9rem; font-weight: 800; cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    button:hover { transform: translateY(-2px); }
+    .btn-new {
+      background: linear-gradient(135deg, #f97316, #fbbf24);
+      color: #1c0a00;
+      box-shadow: 0 4px 15px rgba(249,115,22,0.35);
+    }
+    .btn-new:hover { box-shadow: 0 6px 22px rgba(249,115,22,0.55); }
+    .btn-reset {
+      background: rgba(255,255,255,0.08);
+      border: 1.5px solid rgba(255,255,255,0.15);
+      color: #94a3b8;
+    }
+    .btn-reset:hover { background: rgba(255,255,255,0.14); }
+
+    /* AI mode toggle */
+    .mode-row {
+      display: flex; align-items: center; gap: 0.7rem;
+      margin-bottom: 1rem;
+    }
+    .mode-label { font-size: 0.75rem; color: #64748b; font-weight: 700; letter-spacing: 0.08em; }
+    .toggle-wrap { display: flex; background: rgba(255,255,255,0.07); border-radius: 20px; padding: 3px; }
+    .toggle-btn {
+      padding: 0.28rem 0.85rem; border-radius: 16px; border: none;
+      font-size: 0.75rem; font-weight: 700; cursor: pointer;
+      background: transparent; color: #64748b; transition: all 0.15s;
+    }
+    .toggle-btn.active {
+      background: linear-gradient(135deg, #f97316, #fbbf24);
+      color: #1c0a00;
+      box-shadow: 0 2px 8px rgba(249,115,22,0.3);
+    }
+  </style>
+</head>
+<body>
+
+<h1>❌ Tic Tac Toe ⭕</h1>
+<p class="tagline">EMILIOS SPIEL</p>
+
+<div class="scores">
+  <div class="score-box" id="boxX">
+    <div class="score-label">SPIELER</div>
+    <div class="score-symbol x">✕</div>
+    <div class="score-number" id="scoreX">0</div>
+  </div>
+  <div class="score-box" style="min-width:60px">
+    <div class="score-label">REMIS</div>
+    <div class="score-symbol" style="color:#a78bfa">≡</div>
+    <div class="score-number" id="scoreDraw">0</div>
+  </div>
+  <div class="score-box" id="boxO">
+    <div class="score-label" id="oLabel">GEGNER</div>
+    <div class="score-symbol o">○</div>
+    <div class="score-number" id="scoreO">0</div>
+  </div>
+</div>
+
+<div class="mode-row">
+  <span class="mode-label">MODUS:</span>
+  <div class="toggle-wrap">
+    <button class="toggle-btn active" id="btn2p" onclick="setMode('2p')">👥 2 Spieler</button>
+    <button class="toggle-btn" id="btnAi" onclick="setMode('ai')">🤖 vs KI</button>
+  </div>
+</div>
+
+<div class="status x-turn" id="status">✕ Spieler X ist dran</div>
+
+<div class="board" id="board"></div>
+
+<div class="btn-row">
+  <button class="btn-new" onclick="newGame()">🔄 Neues Spiel</button>
+  <button class="btn-reset" onclick="resetScores()">🗑️ Reset</button>
+</div>
+
+<script>
+const WINS = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+
+let board = Array(9).fill('');
+let current = 'X';
+let gameOver = false;
+let scores = {X:0, O:0, draw:0};
+let mode = '2p'; // '2p' or 'ai'
+let aiThinking = false;
+
+const statusEl  = document.getElementById('status');
+const boardEl   = document.getElementById('board');
+
+// ── Build board cells ──
+function buildBoard() {
+  boardEl.innerHTML = '';
+  for(let i=0;i<9;i++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.dataset.i = i;
+    cell.onclick = () => handleClick(i);
+    boardEl.appendChild(cell);
+  }
+}
+
+function getCell(i) { return boardEl.children[i]; }
+
+// ── Handle player click ──
+function handleClick(i) {
+  if(gameOver || board[i] || aiThinking) return;
+  if(mode === 'ai' && current === 'O') return; // AI's turn
+  place(i, current);
+}
+
+function place(i, who) {
+  board[i] = who;
+  const cell = getCell(i);
+  cell.classList.add('taken', who.toLowerCase());
+  cell.innerHTML = `<span class="mark">${who === 'X' ? '✕' : '○'}</span>`;
+
+  const win = checkWin(who);
+  if(win) {
+    win.forEach(idx => getCell(idx).classList.add('winning'));
+    scores[who]++;
+    updateScores();
+    statusEl.textContent = `${who === 'X' ? '✕ Spieler X' : (mode==='ai'?'🤖 KI':'○ Spieler O')} gewinnt! 🎉`;
+    statusEl.className = `status win-${who.toLowerCase()}`;
+    burst(who);
+    gameOver = true;
+    return;
+  }
+  if(board.every(c=>c)) {
+    scores.draw++;
+    updateScores();
+    statusEl.textContent = '🤝 Unentschieden!';
+    statusEl.className = 'status draw';
+    gameOver = true;
+    return;
+  }
+
+  current = current === 'X' ? 'O' : 'X';
+  updateTurnIndicator();
+
+  if(mode === 'ai' && current === 'O' && !gameOver) {
+    aiThinking = true;
+    setTimeout(doAI, 380);
+  }
+}
+
+// ── Status indicator ──
+function updateTurnIndicator() {
+  if(gameOver) return;
+  if(current === 'X') {
+    statusEl.textContent = '✕ Spieler X ist dran';
+    statusEl.className = 'status x-turn';
+    document.getElementById('boxX').classList.add('active-x');
+    document.getElementById('boxO').classList.remove('active-o');
+  } else {
+    statusEl.textContent = mode==='ai' ? '🤖 KI denkt nach…' : '○ Spieler O ist dran';
+    statusEl.className = 'status o-turn';
+    document.getElementById('boxO').classList.add('active-o');
+    document.getElementById('boxX').classList.remove('active-x');
+  }
+}
+
+// ── Scores ──
+function updateScores() {
+  document.getElementById('scoreX').textContent = scores.X;
+  document.getElementById('scoreO').textContent = scores.O;
+  document.getElementById('scoreDraw').textContent = scores.draw;
+}
+
+// ── Win check ──
+function checkWin(who) {
+  for(const combo of WINS) {
+    if(combo.every(i => board[i] === who)) return combo;
+  }
+  return null;
+}
+
+// ── Minimax AI ──
+function minimax(b, isMax, depth) {
+  if(checkWinBoard(b,'O')) return 10 - depth;
+  if(checkWinBoard(b,'X')) return depth - 10;
+  if(b.every(c=>c)) return 0;
+  const moves = b.map((v,i)=>v?null:i).filter(v=>v!==null);
+  if(isMax) {
+    let best=-Infinity;
+    for(const m of moves) { b[m]='O'; best=Math.max(best,minimax(b,false,depth+1)); b[m]=''; }
+    return best;
+  } else {
+    let best=Infinity;
+    for(const m of moves) { b[m]='X'; best=Math.min(best,minimax(b,true,depth+1)); b[m]=''; }
+    return best;
+  }
+}
+function checkWinBoard(b,who) {
+  return WINS.some(c=>c.every(i=>b[i]===who));
+}
+
+function doAI() {
+  const empty = board.map((v,i)=>v?null:i).filter(v=>v!==null);
+  let best=-Infinity, move=empty[0];
+  for(const m of empty) {
+    board[m]='O';
+    const score=minimax(board,false,0);
+    board[m]='';
+    if(score>best) { best=score; move=m; }
+  }
+  aiThinking = false;
+  place(move,'O');
+}
+
+// ── Particle burst ──
+function burst(who) {
+  const emojis = who==='X'
+    ? ['🎉','✨','⭐','🔥','💥']
+    : ['🎊','💫','🌟','⚡','🎈'];
+  for(let i=0;i<18;i++) {
+    const el=document.createElement('div');
+    el.className='particle';
+    el.textContent=emojis[Math.floor(Math.random()*emojis.length)];
+    const angle=Math.random()*2*Math.PI;
+    const dist=80+Math.random()*140;
+    el.style.setProperty('--dx',`${Math.cos(angle)*dist}px`);
+    el.style.setProperty('--dy',`${Math.sin(angle)*dist}px`);
+    el.style.left=`${40+Math.random()*20}%`;
+    el.style.top=`${40+Math.random()*20}%`;
+    el.style.animationDelay=`${Math.random()*0.3}s`;
+    document.body.appendChild(el);
+    setTimeout(()=>el.remove(),1200);
+  }
+}
+
+// ── Mode toggle ──
+function setMode(m) {
+  mode = m;
+  document.getElementById('btn2p').classList.toggle('active', m==='2p');
+  document.getElementById('btnAi').classList.toggle('active', m==='ai');
+  document.getElementById('oLabel').textContent = m==='ai' ? 'KI' : 'GEGNER';
+  resetScores();
+}
+
+// ── New game (keep scores) ──
+function newGame() {
+  board = Array(9).fill('');
+  current = 'X';
+  gameOver = false;
+  aiThinking = false;
+  buildBoard();
+  statusEl.textContent = '✕ Spieler X ist dran';
+  statusEl.className = 'status x-turn';
+  document.getElementById('boxX').classList.remove('active-x');
+  document.getElementById('boxO').classList.remove('active-o');
+}
+
+// ── Reset scores ──
+function resetScores() {
+  scores = {X:0, O:0, draw:0};
+  updateScores();
+  newGame();
+}
+
+// ── Init ──
+buildBoard();
+</script>
+</body>
+</html>
