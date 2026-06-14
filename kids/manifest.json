@@ -110,6 +110,11 @@
     "path": "kids/rayan2/index.html"
   },
   {
+    "name": "sensei",
+    "title": "Ninja Run",
+    "path": "kids/sensei/index.html"
+  },
+  {
     "name": "souna",
     "title": "Wizard Pong ⚡",
     "path": "kids/souna/index.html"
