@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>⚔️ Jedi Survival</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: #000;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: 100vh;
+  font-family: 'Arial Black', Arial, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+#hud {
+  color: #eee; font-size: 15px;
+  margin-bottom: 7px;
+  display: flex; gap: 18px; align-items: center;
+}
+#buildLabel { color: #00aaff; font-size: 14px; min-width: 170px; }
+canvas { border: 3px solid #0a2a0a; border-radius: 6px; cursor: crosshair; }
+#info { color: #333; font-size: 11px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <span>❤️ <span id="hp">100</span></span>
+  <span>💎 <span id="crystals">0</span></span>
+  <span>⚙️ <span id="metals">0</span></span>
+  <span>🌊 Welle <span id="waveNum">—</span></span>
+  <span>⭐ <span id="score">0</span></span>
+  <span id="buildLabel">—</span>
+</div>
+<canvas id="c" width="600" height="600"></canvas>
+<div id="info">WASD / Pfeiltasten · SPACE oder Klick = Lichtschwert · B = Energiemauer (3💎) · N = Stahlmauer (5⚙️)</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 600, H = 600;
+const TILE = 20, COLS = 30, ROWS = 30;
+
+// Tile-Typen
+const GRASS=0, CRYSTAL=1, METAL=2, EWALL=3, SWALL=4, ROCK=5;
+
+// ═══ WELT ══════════════════════════════════════════
+const grid    = Array.from({length:ROWS},()=>new Int8Array(COLS));
+const wallHp  = Array.from({length:ROWS},()=>new Float32Array(COLS));
+
+const ROCK_POS = [[4,4],[25,4],[4,25],[25,25],[14,7],[14,22],[7,14],[22,14],[10,10],[20,10],[10,20],[20,20]];
+
+function initWorld() {
+  for (let r=0;r<ROWS;r++) { grid[r].fill(GRASS); wallHp[r].fill(0); }
+  ROCK_POS.forEach(([c,r]) => grid[r][c]=ROCK);
+  scatter(CRYSTAL, 20);
+  scatter(METAL, 16);
+}
+
+function scatter(type, n) {
+  let placed=0, tries=0;
+  while (placed<n && tries<5000) {
+    tries++;
+    const c=1+Math.floor(Math.random()*28), r=1+Math.floor(Math.random()*28);
+    if (grid[r][c]===GRASS && !(Math.abs(c-15)<4 && Math.abs(r-15)<4)) {
+      grid[r][c]=type; placed++;
+    }
+  }
+}
+
+function solid(c, r) {
+  if (c<0||c>=COLS||r<0||r>=ROWS) return true;
+  const t=grid[r][c];
+  return t===ROCK||t===EWALL||t===SWALL;
+}
+
+function canWalk(x, y, hw=9) {
+  const pts=[[x-hw,y-hw],[x+hw,y-hw],[x-hw,y+hw],[x+hw,y+hw]];
+  return pts.every(([px,py])=>!solid(Math.floor(px/TILE),Math.floor(py/TILE)));
+}
+
+// ═══ STARS (background) ════════════════════════════
+const STARS = Array.from({length:120},()=>({
+  x:Math.random()*W, y:Math.random()*H,
+  r:0.5+Math.random()*1.5,
+  a:0.2+Math.random()*0.5
+}));
+
+// ═══ JEDI ══════════════════════════════════════════
+const jedi = {
+  x:300, y:300,
+  speed:2.6,
+  hp:100, maxHp:100,
+  crystals:0, metals:0,
+  atk:0,           // attack animation countdown
+  atkRange:58,
+  inv:0,            // invincibility frames
+  facing:0,
+};
+
+// ═══ ENEMIES ═══════════════════════════════════════
+let enemies=[], bolts=[], sparks=[];
+
+// ═══ STATE ═════════════════════════════════════════
+let state='start';
+let wave=0, waveTimer=0, waveAnn=0, score=0, frame=0;
+let buildMode=false, buildType='energy';
+
+// ═══ KEYS & MOUSE ══════════════════════════════════
+const keys={};
+let mX=W/2, mY=H/2;
+
+document.addEventListener('keydown', e=>{
+  keys[e.code]=true;
+  if (e.code==='Space') {
+    e.preventDefault();
+    if (state==='start') startGame();
+    else if (state==='gameover') startGame();
+    else swingLightsaber();
+  }
+  if (e.code==='KeyB' && state==='playing') { buildMode=!buildMode; buildType='energy'; updateBuildLabel(); }
+  if (e.code==='KeyN' && state==='playing') { buildMode=!buildMode; buildType='steel'; updateBuildLabel(); }
+  if (e.code==='Escape') { buildMode=false; updateBuildLabel(); }
+});
+document.addEventListener('keyup', e=>{ keys[e.code]=false; });
+canvas.addEventListener('mousemove', e=>{
+  const r=canvas.getBoundingClientRect();
+  mX=e.clientX-r.left; mY=e.clientY-r.top;
+  jedi.facing=Math.atan2(mY-jedi.y, mX-jedi.x);
+});
+canvas.addEventListener('click', e=>{
+  if (state!=='playing') return;
+  const r=canvas.getBoundingClientRect();
+  const cx=e.clientX-r.left, cy=e.clientY-r.top;
+  if (buildMode) {
+    const tc=Math.floor(cx/TILE), tr=Math.floor(cy/TILE);
+    if (tc<0||tc>=COLS||tr<0||tr>=ROWS||grid[tr][tc]!==GRASS) return;
+    if (buildType==='energy' && jedi.crystals>=3) {
+      grid[tr][tc]=EWALL; wallHp[tr][tc]=2;
+      jedi.crystals-=3;
+      spark(tc*TILE+10, tr*TILE+10, '#00aaff', 8);
+    } else if (buildType==='steel' && jedi.metals>=5) {
+      grid[tr][tc]=SWALL; wallHp[tr][tc]=5;
+      jedi.metals-=5;
+      spark(tc*TILE+10, tr*TILE+10, '#888', 8);
+    }
+  } else {
+    swingLightsaber();
+  }
+});
+
+function updateBuildLabel() {
+  const el=document.getElementById('buildLabel');
+  if (!buildMode) { el.textContent='—'; el.style.color='#555'; return; }
+  if (buildType==='energy') { el.textContent='🔨 Energiemauer (3💎)'; el.style.color='#00aaff'; }
+  else { el.textContent='🔨 Stahlmauer (5⚙️)'; el.style.color='#aaa'; }
+}
+
+// ═══ GAME FUNCTIONS ════════════════════════════════
+function startGame() {
+  initWorld();
+  jedi.x=300; jedi.y=300; jedi.hp=100; jedi.crystals=0; jedi.metals=0;
+  jedi.atk=0; jedi.inv=0; jedi.facing=0;
+  enemies=[]; bolts=[]; sparks=[];
+  wave=0; score=0; frame=0; waveAnn=0;
+  buildMode=false; updateBuildLabel();
+  waveTimer=150; // kurze Startpause
+  state='playing';
+}
+
+function spawnWave() {
+  wave++;
+  waveAnn=150;
+  const troopers = 2 + wave*2;
+  const sith     = Math.max(0, wave-2);
+  for (let i=0;i<troopers;i++) spawnEnemy(false);
+  for (let i=0;i<sith;i++) spawnEnemy(true);
+  waveTimer = Math.max(900, 1500 - wave*50);
+}
+
+function spawnEnemy(isSith) {
+  let x, y;
+  const side=Math.floor(Math.random()*4);
+  if (side===0){x=10+Math.random()*580;y=5;}
+  else if(side===1){x=595;y=10+Math.random()*580;}
+  else if(side===2){x=10+Math.random()*580;y=595;}
+  else{x=5;y=10+Math.random()*580;}
+  enemies.push({
+    x,y,
+    speed: isSith ? 1.6 : 0.95+Math.random()*0.3,
+    hp: isSith ? 5 : 2,
+    maxHp: isSith ? 5 : 2,
+    isSith,
+    shootCd: 80+Math.floor(Math.random()*60),
+    w: isSith ? 15 : 12,
+  });
+}
+
+function swingLightsaber() {
+  if (state!=='playing'||jedi.atk>0) return;
+  jedi.atk=22;
+  let hit=false;
+  enemies=enemies.filter(e=>{
+    if (Math.hypot(e.x-jedi.x,e.y-jedi.y)<jedi.atkRange) {
+      e.hp--;
+      spark(e.x,e.y,e.isSith?'#ff4444':'#00ff88',12);
+      if (e.hp<=0) {
+        score+=e.isSith?60:25;
+        spark(e.x,e.y,e.isSith?'#ff0000':'#ffffff',20);
+        return false;
+      }
+      hit=true; return true;
+    }
+    return true;
+  });
+  spark(jedi.x+Math.cos(jedi.facing)*35,jedi.y+Math.sin(jedi.facing)*35,'#00ff88',10);
+}
+
+function spark(x,y,col,n=10) {
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2, s=1+Math.random()*5;
+    sparks.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18+Math.random()*18,col,r:1.5+Math.random()*3});
+  }
+}
+
+// ═══ UPDATE ════════════════════════════════════════
+function update() {
+  if (state!=='playing') return;
+  frame++;
+  score++;
+
+  // Jedi Bewegung
+  let dx=0,dy=0;
+  if(keys['KeyW']||keys['ArrowUp'])    dy=-1;
+  if(keys['KeyS']||keys['ArrowDown'])  dy= 1;
+  if(keys['KeyA']||keys['ArrowLeft'])  dx=-1;
+  if(keys['KeyD']||keys['ArrowRight']) dx= 1;
+  if(dx&&dy){dx*=0.707;dy*=0.707;}
+
+  const nx=jedi.x+dx*jedi.speed, ny=jedi.y+dy*jedi.speed;
+  if(canWalk(nx,jedi.y)) jedi.x=Math.max(10,Math.min(W-10,nx));
+  if(canWalk(jedi.x,ny)) jedi.y=Math.max(10,Math.min(H-10,ny));
+  jedi.facing=Math.atan2(mY-jedi.y, mX-jedi.x);
+
+  // Ressourcen aufsammeln
+  const tc=Math.floor(jedi.x/TILE), tr=Math.floor(jedi.y/TILE);
+  if(grid[tr]&&grid[tr][tc]===CRYSTAL){jedi.crystals++;grid[tr][tc]=GRASS;spark(jedi.x,jedi.y,'#00aaff',8);}
+  if(grid[tr]&&grid[tr][tc]===METAL)  {jedi.metals++;  grid[tr][tc]=GRASS;spark(jedi.x,jedi.y,'#999',6);}
+
+  if(jedi.atk>0) jedi.atk--;
+  if(jedi.inv>0)  jedi.inv--;
+
+  // Wellen-Timer
+  waveTimer--;
+  if(waveTimer<=0) spawnWave();
+
+  // Wellen-Ankündigung
+  if(waveAnn>0) waveAnn--;
+
+  // Gegner Update
+  enemies.forEach(e=>{
+    // Bewegung zum Jedi
+    const edx=jedi.x-e.x, edy=jedi.y-e.y;
+    const dist=Math.hypot(edx,edy);
+    if(dist>16){
+      const spd=e.speed;
+      const mx=(edx/dist)*spd, my=(edy/dist)*spd;
+      if(canWalk(e.x+mx,e.y+my,6)) {e.x+=mx;e.y+=my;}
+      else if(canWalk(e.x+mx,e.y,6)) e.x+=mx;
+      else if(canWalk(e.x,e.y+my,6)) e.y+=my;
+    }
+    // Schießen
+    e.shootCd--;
+    if(e.shootCd<=0 && dist<200){
+      const ba=Math.atan2(jedi.y-e.y, jedi.x-e.x);
+      const bspd=e.isSith?6:5;
+      bolts.push({x:e.x,y:e.y,vx:Math.cos(ba)*bspd,vy:Math.sin(ba)*bspd,life:80,isSith:e.isSith,dmg:e.isSith?15:8});
+      e.shootCd=e.isSith?55:85;
+    }
+    // Nahkampf-Treffer
+    if(dist<16 && jedi.inv===0){
+      jedi.hp-=e.isSith?12:7;
+      jedi.inv=50;
+      spark(jedi.x,jedi.y,'#ff3300',14);
+      if(jedi.hp<=0){jedi.hp=0;state='gameover';}
+    }
+  });
+
+  // Bolts Update
+  bolts=bolts.filter(b=>{
+    b.x+=b.vx; b.y+=b.vy; b.life--;
+    if(b.life<=0||b.x<0||b.x>W||b.y<0||b.y>H) return false;
+    // Wand-Treffer
+    const btc=Math.floor(b.x/TILE), btr=Math.floor(b.y/TILE);
+    if(btc>=0&&btc<COLS&&btr>=0&&btr<ROWS&&(grid[btr][btc]===EWALL||grid[btr][btc]===SWALL)){
+      wallHp[btr][btc]--;
+      spark(b.x,b.y,'#888',5);
+      if(wallHp[btr][btc]<=0){grid[btr][btc]=GRASS;spark(b.x,b.y,'#ff8800',10);}
+      return false;
+    }
+    if(solid(btc,btr)){spark(b.x,b.y,'#555',3);return false;}
+    // Jedi-Treffer
+    if(jedi.inv===0&&Math.hypot(b.x-jedi.x,b.y-jedi.y)<13){
+      jedi.hp-=b.dmg; jedi.inv=30;
+      spark(jedi.x,jedi.y,'#ff3300',12);
+      if(jedi.hp<=0){jedi.hp=0;state='gameover';}
+      return false;
+    }
+    return true;
+  });
+
+  // Partikel
+  sparks.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vx*=0.88;p.vy*=0.88;p.life--;});
+  sparks=sparks.filter(p=>p.life>0);
+
+  // HUD
+  document.getElementById('hp').textContent        = Math.max(0,Math.round(jedi.hp));
+  document.getElementById('crystals').textContent  = jedi.crystals;
+  document.getElementById('metals').textContent    = jedi.metals;
+  document.getElementById('waveNum').textContent   = wave||'—';
+  document.getElementById('score').textContent     = score;
+}
+
+// ═══ DRAW ══════════════════════════════════════════
+function drawGrid() {
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) {
+    const x=c*TILE, y=r*TILE, t=grid[r][c];
+    // Boden (Schachbrett sehr dunkel)
+    ctx.fillStyle=(r+c)%2===0?'#0b160b':'#091209';
+    ctx.fillRect(x,y,TILE,TILE);
+
+    if(t===CRYSTAL){
+      ctx.fillStyle='#001833';
+      ctx.fillRect(x,y,TILE,TILE);
+      // Kristall-Form
+      ctx.fillStyle='#0088ff';
+      ctx.shadowColor='#00aaff'; ctx.shadowBlur=10;
+      ctx.beginPath();
+      ctx.moveTo(x+10,y+2); ctx.lineTo(x+16,y+8);
+      ctx.lineTo(x+10,y+18); ctx.lineTo(x+4,y+8);
+      ctx.closePath(); ctx.fill();
+      ctx.shadowBlur=0;
+    } else if(t===METAL){
+      ctx.fillStyle='#111';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle='#555';
+      ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
+      ctx.fillStyle='#777';
+      ctx.fillRect(x+6,y+7,8,6);
+      ctx.fillStyle='#999';
+      ctx.fillRect(x+7,y+8,3,4);
+    } else if(t===EWALL){
+      ctx.fillStyle='#001a33';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.strokeStyle='#0066ff';
+      ctx.shadowColor='#0088ff'; ctx.shadowBlur=8;
+      ctx.lineWidth=2;
+      ctx.strokeRect(x+2,y+2,TILE-4,TILE-4);
+      ctx.shadowBlur=0;
+      // HP
+      const frac=wallHp[r][c]/2;
+      ctx.fillStyle='#003366'; ctx.fillRect(x+3,y+TILE-5,TILE-6,3);
+      ctx.fillStyle=`hsl(210,100%,${35+frac*30}%)`; ctx.fillRect(x+3,y+TILE-5,(TILE-6)*frac,3);
+    } else if(t===SWALL){
+      ctx.fillStyle='#1a1a1a';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle='#3a3a3a';
+      ctx.fillRect(x+2,y+2,TILE-4,TILE-4);
+      ctx.strokeStyle='#555'; ctx.lineWidth=0.5;
+      ctx.strokeRect(x+2,y+2,TILE-4,TILE-4);
+      // Nieten
+      ['#888','#888','#888','#888'].forEach((_,i)=>{
+        ctx.fillStyle='#888';
+        ctx.beginPath();
+        ctx.arc(x+[4,16,4,16][i], y+[4,4,16,16][i], 1.8, 0, Math.PI*2);
+        ctx.fill();
+      });
+      // HP
+      const frac=wallHp[r][c]/5;
+      ctx.fillStyle='#222'; ctx.fillRect(x+3,y+TILE-5,TILE-6,3);
+      ctx.fillStyle=`hsl(0,0%,${25+frac*40}%)`; ctx.fillRect(x+3,y+TILE-5,(TILE-6)*frac,3);
+    } else if(t===ROCK){
+      ctx.fillStyle='#1a1208';
+      ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle='#3a2a14';
+      ctx.beginPath();
+      ctx.moveTo(x+3,y+TILE-3);
+      ctx.lineTo(x+2,y+8); ctx.lineTo(x+8,y+2);
+      ctx.lineTo(x+TILE-4,y+3); ctx.lineTo(x+TILE-2,y+TILE-4);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle='#5a4a24'; ctx.lineWidth=0.8; ctx.stroke();
+    }
+  }
+}
+
+function drawJedi() {
+  ctx.save();
+  ctx.translate(jedi.x, jedi.y);
+
+  if(jedi.inv>0 && frame%6<3) ctx.globalAlpha=0.4;
+
+  // Lichtschwert-Bogen bei Attacke
+  if(jedi.atk>0){
+    const p=1-jedi.atk/22;
+    ctx.strokeStyle=`rgba(0,255,100,${0.8-p*0.6})`;
+    ctx.shadowColor='#00ff66'; ctx.shadowBlur=24;
+    ctx.lineWidth=10;
+    ctx.beginPath();
+    ctx.arc(0,0,jedi.atkRange, jedi.facing-1.0+p*0.5, jedi.facing+1.0-p*0.5);
+    ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+
+  // Umhang
+  ctx.fillStyle='#111122';
+  ctx.beginPath(); ctx.ellipse(0,3,11,13,0,0,Math.PI*2); ctx.fill();
+  // Körper innen
+  ctx.fillStyle='#1a1a2e';
+  ctx.beginPath(); ctx.ellipse(0,3,8,10,0,0,Math.PI*2); ctx.fill();
+
+  // Kopf
+  ctx.fillStyle='#d4a96a';
+  ctx.beginPath(); ctx.arc(0,-10,7,0,Math.PI*2); ctx.fill();
+
+  // Kapuze
+  ctx.fillStyle='#0a0a18';
+  ctx.beginPath();
+  ctx.arc(0,-12,9, Math.PI, 0); ctx.fill();
+  ctx.fillStyle='#111122';
+  ctx.beginPath(); ctx.ellipse(0,-8,6,4,0,0,Math.PI*2); ctx.fill();
+
+  // Lichtschwert Klinge
+  const lStart=14, lEnd=38;
+  const lx0=Math.cos(jedi.facing)*lStart, ly0=Math.sin(jedi.facing)*lStart;
+  const lx1=Math.cos(jedi.facing)*lEnd,   ly1=Math.sin(jedi.facing)*lEnd;
+
+  // Glüh-Effekt
+  ctx.strokeStyle='rgba(0,255,100,0.3)';
+  ctx.shadowColor='#00ff66'; ctx.shadowBlur=16;
+  ctx.lineWidth=9;
+  ctx.beginPath(); ctx.moveTo(lx0,ly0); ctx.lineTo(lx1,ly1); ctx.stroke();
+  // Kern
+  ctx.strokeStyle='#ccffcc';
+  ctx.shadowColor='#00ff88'; ctx.shadowBlur=8;
+  ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.moveTo(lx0,ly0); ctx.lineTo(lx1,ly1); ctx.stroke();
+  ctx.shadowBlur=0;
+
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  ctx.save();
+  ctx.translate(e.x,e.y);
+
+  if(e.isSith){
+    // Umhang schwarz-rot
+    ctx.fillStyle='#0d0000';
+    ctx.beginPath(); ctx.ellipse(0,2,11,14,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#220000';
+    ctx.beginPath(); ctx.ellipse(0,2,8,10,0,0,Math.PI*2); ctx.fill();
+    // Helm
+    ctx.fillStyle='#330000';
+    ctx.beginPath(); ctx.arc(0,-9,9,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#550000';
+    ctx.fillRect(-6,-13,12,5);
+    // Maske
+    ctx.fillStyle='#110000';
+    ctx.beginPath(); ctx.ellipse(0,-10,4,3,0,0,Math.PI*2); ctx.fill();
+    // Rotes Lichtschwert
+    const sa=Math.atan2(jedi.y-e.y,jedi.x-e.x);
+    ctx.strokeStyle='rgba(255,0,0,0.4)'; ctx.lineWidth=9; ctx.shadowBlur=0;
+    ctx.beginPath(); ctx.moveTo(Math.cos(sa)*12,Math.sin(sa)*12); ctx.lineTo(Math.cos(sa)*34,Math.sin(sa)*34); ctx.stroke();
+    ctx.strokeStyle='#ff4444'; ctx.shadowColor='#ff0000'; ctx.shadowBlur=12; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.moveTo(Math.cos(sa)*12,Math.sin(sa)*12); ctx.lineTo(Math.cos(sa)*34,Math.sin(sa)*34); ctx.stroke();
+    ctx.shadowBlur=0;
+    // HP-Balken
+    ctx.fillStyle='#400'; ctx.fillRect(-10,13,20,4);
+    ctx.fillStyle='#f00'; ctx.fillRect(-10,13,20*e.hp/e.maxHp,4);
+  } else {
+    // Stormtrooper-Rüstung
+    ctx.fillStyle='#ddd';
+    ctx.beginPath(); ctx.ellipse(0,2,9,11,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#bbb';
+    ctx.beginPath(); ctx.ellipse(0,2,6,8,0,0,Math.PI*2); ctx.fill();
+    // Helm
+    ctx.fillStyle='#eee';
+    ctx.beginPath(); ctx.arc(0,-8,8,0,Math.PI*2); ctx.fill();
+    // Visier
+    ctx.fillStyle='#222';
+    ctx.beginPath(); ctx.ellipse(0,-9,5,3,0,0,Math.PI*2); ctx.fill();
+    // Augen
+    ctx.fillStyle='#f00';
+    ctx.beginPath(); ctx.arc(-2.5,-9,1.2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(2.5,-9,1.2,0,Math.PI*2); ctx.fill();
+    // HP-Balken (nur wenn beschädigt)
+    if(e.hp<e.maxHp){
+      ctx.fillStyle='#400'; ctx.fillRect(-8,11,16,3);
+      ctx.fillStyle='#0f0'; ctx.fillRect(-8,11,16*e.hp/e.maxHp,3);
+    }
+  }
+  ctx.restore();
+}
+
+function draw() {
+  // Schwarzer Hintergrund
+  ctx.fillStyle='#040808';
+  ctx.fillRect(0,0,W,H);
+
+  // Sterne (nur auf Startscreen und Spielfeld-Hintergrund)
+  STARS.forEach(s=>{
+    ctx.fillStyle=`rgba(255,255,255,${s.a})`;
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
+  });
+
+  if(state==='start'||state==='gameover') {
+    drawStartOrGameover();
+    return;
+  }
+
+  // Spielwelt
+  drawGrid();
+
+  // Build-Vorschau
+  if(buildMode){
+    const btc=Math.floor(mX/TILE), btr=Math.floor(mY/TILE);
+    if(btc>=0&&btc<COLS&&btr>=0&&btr<ROWS&&grid[btr][btc]===GRASS){
+      ctx.fillStyle=buildType==='energy'?'rgba(0,100,255,0.25)':'rgba(130,130,130,0.25)';
+      ctx.fillRect(btc*TILE,btr*TILE,TILE,TILE);
+      ctx.strokeStyle=buildType==='energy'?'#0088ff':'#999';
+      ctx.lineWidth=1.5; ctx.setLineDash([4,2]);
+      ctx.strokeRect(btc*TILE,btr*TILE,TILE,TILE);
+      ctx.setLineDash([]);
+    }
+  }
+
+  // Blaster-Bolts
+  bolts.forEach(b=>{
+    ctx.save();
+    const col=b.isSith?'#ff2200':'#ff6600';
+    ctx.fillStyle=col; ctx.shadowColor=col; ctx.shadowBlur=10;
+    ctx.beginPath(); ctx.arc(b.x,b.y,3.5,0,Math.PI*2); ctx.fill();
+    // Schweif
+    ctx.strokeStyle=col+'88'; ctx.lineWidth=2; ctx.shadowBlur=0;
+    ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*5,b.y-b.vy*5); ctx.stroke();
+    ctx.restore();
+  });
+
+  // Gegner
+  enemies.forEach(drawEnemy);
+
+  // Jedi
+  drawJedi();
+
+  // Partikel
+  sparks.forEach(p=>{
+    ctx.save();
+    ctx.globalAlpha=p.life/36;
+    ctx.fillStyle=p.col; ctx.shadowColor=p.col; ctx.shadowBlur=6;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+
+  // HP-Balken (unten)
+  const bx=10, by=H-22, bw=200, bh=14;
+  ctx.fillStyle='#220000'; ctx.fillRect(bx,by,bw,bh);
+  const hfrac=jedi.hp/jedi.maxHp;
+  ctx.fillStyle=hfrac>0.5?'#00cc44':hfrac>0.25?'#ffaa00':'#ff2200';
+  ctx.fillRect(bx,by,bw*hfrac,bh);
+  ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,bh);
+  ctx.fillStyle='#fff'; ctx.font='bold 10px Arial';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText(`❤️  ${Math.max(0,Math.round(jedi.hp))} / ${jedi.maxHp}`, bx+5, by+7);
+
+  // Nächste Welle Timer (wenn keine Gegner)
+  if(enemies.length===0 && waveTimer>0){
+    const secs=Math.ceil(waveTimer/60);
+    ctx.fillStyle='rgba(0,0,0,0.65)';
+    ctx.fillRect(W/2-90,H-38,180,28);
+    ctx.fillStyle='#ffd700'; ctx.font='bold 13px Arial';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(`⚠️ Nächste Welle in ${secs}s`, W/2, H-24);
+  }
+
+  // Wellen-Ankündigung
+  if(waveAnn>0){
+    const alpha=Math.min(1, waveAnn>100 ? (150-waveAnn)/50 : waveAnn/100);
+    ctx.save();
+    ctx.globalAlpha=alpha;
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    ctx.fillRect(W/2-130, H/2-45, 260, 60);
+    ctx.fillStyle='#ff4400';
+    ctx.shadowColor='#ff2200'; ctx.shadowBlur=20;
+    ctx.font='bold 30px Arial Black';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(`⚠️  WELLE ${wave}!  ⚠️`, W/2, H/2-18);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#fff'; ctx.font='bold 14px Arial';
+    ctx.fillText(`${enemies.length} Gegner kommen!`, W/2, H/2+12);
+    ctx.restore();
+  }
+}
+
+function drawStartOrGameover() {
+  ctx.fillStyle='rgba(0,0,0,0.88)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+
+  if(state==='start'){
+    ctx.fillStyle='#00ff66';
+    ctx.shadowColor='#00ff66'; ctx.shadowBlur=25;
+    ctx.font='bold 46px Arial Black';
+    ctx.fillText('⚔️  JEDI SURVIVAL', W/2, 155);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#aaffaa'; ctx.font='bold 17px Arial';
+    ctx.fillText('Star Wars × Minecraft', W/2, 200);
+
+    ctx.fillStyle='#ccc'; ctx.font='14px Arial';
+    const lines=[
+      'WASD / Pfeiltasten = Bewegen',
+      'SPACE oder Klick = Lichtschwert-Angriff',
+      '💎 Kristalle aufsammeln → B drücken → Energiemauer bauen',
+      '⚙️ Metall aufsammeln → N drücken → Stahlmauer bauen',
+      'Überlebe so viele Wellen wie möglich!',
+    ];
+    lines.forEach((l,i)=>ctx.fillText(l, W/2, 255+i*28));
+
+    ctx.fillStyle='#00ff66'; ctx.font='bold 22px Arial';
+    ctx.shadowColor='#00ff66'; ctx.shadowBlur=10;
+    ctx.fillText('SPACE zum Starten!', W/2, 440);
+    ctx.shadowBlur=0;
+  } else {
+    ctx.fillStyle='#ff3300';
+    ctx.shadowColor='#ff0000'; ctx.shadowBlur=25;
+    ctx.font='bold 50px Arial Black';
+    ctx.fillText('GAME OVER 💀', W/2, 195);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#ffd700'; ctx.font='bold 26px Arial';
+    ctx.fillText(`Welle ${wave} überlebt`, W/2, 265);
+    ctx.fillText(`Punkte: ${score}`, W/2, 305);
+    ctx.fillStyle='#fff'; ctx.font='bold 20px Arial';
+    ctx.fillText('SPACE = Nochmal!', W/2, 370);
+  }
+}
+
+// ═══ LOOP ══════════════════════════════════════════
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>
