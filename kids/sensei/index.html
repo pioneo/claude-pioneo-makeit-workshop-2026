@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ninja Run</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      overflow: hidden;
+    }
+    h1 {
+      color: #e94560;
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+      text-shadow: 0 0 20px #e94560;
+      letter-spacing: 4px;
+    }
+    canvas {
+      border: 3px solid #e94560;
+      border-radius: 12px;
+      box-shadow: 0 0 40px rgba(233,69,96,0.4);
+    }
+    #info {
+      color: #aaa;
+      margin-top: 12px;
+      font-size: 1rem;
+    }
+    #info span {
+      color: #e94560;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>🥷 NINJA RUN</h1>
+  <canvas id="game" width="800" height="300"></canvas>
+  <div id="info">Drücke <span>LEERTASTE</span> oder <span>TIPPE</span> um zu springen!</div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    // ── Game state ──────────────────────────────────────────────
+    let state = 'idle'; // idle | playing | dead
+    let score = 0;
+    let highScore = 0;
+    let frame = 0;
+    let speed = 5;
+    let obstacles = [];
+    let stars = [];
+    let particles = [];
+
+    // ── Ninja ───────────────────────────────────────────────────
+    const ninja = {
+      x: 100, y: 230, w: 36, h: 48,
+      vy: 0, onGround: true,
+      jumpCount: 0,
+      frame: 0, frameTimer: 0,
+      get bottom() { return this.y + this.h; }
+    };
+
+    const GROUND = 230;
+    const GRAVITY = 0.7;
+    const JUMP_FORCE = -14;
+
+    // ── Stars ────────────────────────────────────────────────────
+    for (let i = 0; i < 60; i++) {
+      stars.push({ x: Math.random() * 800, y: Math.random() * 200, r: Math.random() * 1.5 + 0.5, speed: Math.random() * 0.5 + 0.2 });
+    }
+
+    // ── Input ────────────────────────────────────────────────────
+    function jump() {
+      if (state === 'dead' || state === 'idle') { restart(); return; }
+      if (ninja.jumpCount < 2) {
+        ninja.vy = JUMP_FORCE;
+        ninja.onGround = false;
+        ninja.jumpCount++;
+        spawnJumpParticles();
+      }
+    }
+
+    document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); jump(); } });
+    canvas.addEventListener('click', jump);
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); jump(); }, { passive: false });
+
+    // ── Restart ──────────────────────────────────────────────────
+    function restart() {
+      state = 'playing';
+      score = 0;
+      speed = 5;
+      frame = 0;
+      obstacles = [];
+      particles = [];
+      ninja.y = GROUND;
+      ninja.vy = 0;
+      ninja.onGround = true;
+      ninja.jumpCount = 0;
+    }
+
+    // ── Spawn obstacles ──────────────────────────────────────────
+    const OBSTACLE_TYPES = [
+      { w: 24, h: 48, color: '#ff6b6b', label: '🗡️' },
+      { w: 32, h: 64, color: '#ffa94d', label: '🔥' },
+      { w: 20, h: 80, color: '#cc5de8', label: '⚔️' },
+    ];
+
+    function spawnObstacle() {
+      const t = OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)];
+      obstacles.push({ x: 820, w: t.w, h: t.h, color: t.color, label: t.label, y: GROUND + ninja.h - t.h });
+    }
+
+    // ── Particles ────────────────────────────────────────────────
+    function spawnJumpParticles() {
+      for (let i = 0; i < 8; i++) {
+        particles.push({
+          x: ninja.x + ninja.w / 2, y: ninja.y + ninja.h,
+          vx: (Math.random() - 0.5) * 4, vy: Math.random() * 2 + 1,
+          life: 1, color: `hsl(${Math.random()*60+20},100%,70%)`
+        });
+      }
+    }
+    function spawnDeathParticles() {
+      for (let i = 0; i < 24; i++) {
+        particles.push({
+          x: ninja.x + ninja.w / 2, y: ninja.y + ninja.h / 2,
+          vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+          life: 1, color: `hsl(${Math.random()*40},100%,60%)`
+        });
+      }
+    }
+
+    // ── Draw helpers ─────────────────────────────────────────────
+    function drawNinja() {
+      const x = ninja.x, y = ninja.y, w = ninja.w, h = ninja.h;
+      // Body
+      ctx.fillStyle = '#2d2d2d';
+      ctx.fillRect(x, y, w, h);
+      // Scarf
+      ctx.fillStyle = '#e94560';
+      ctx.fillRect(x, y + 14, w, 10);
+      // Head
+      ctx.fillStyle = '#2d2d2d';
+      ctx.fillRect(x + 4, y - 14, 28, 20);
+      // Eyes
+      ctx.fillStyle = '#e94560';
+      ctx.fillRect(x + 16, y - 8, 12, 5);
+      // Headband
+      ctx.fillStyle = '#e94560';
+      ctx.fillRect(x + 4, y - 14, 28, 5);
+      // Legs (animated)
+      const legPhase = ninja.onGround ? Math.sin(frame * 0.25) * 8 : 0;
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(x + 2, y + h - 16, 12, 16 + legPhase);
+      ctx.fillRect(x + w - 14, y + h - 16, 12, 16 - legPhase);
+      // Sword
+      ctx.strokeStyle = '#aaa';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x + w, y + 20);
+      ctx.lineTo(x + w + 24, y + 8);
+      ctx.stroke();
+      ctx.fillStyle = '#888';
+      ctx.fillRect(x + w, y + 18, 8, 4);
+    }
+
+    function drawObstacle(ob) {
+      // Glow
+      ctx.shadowColor = ob.color;
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = ob.color;
+      ctx.fillRect(ob.x, ob.y, ob.w, ob.h);
+      ctx.shadowBlur = 0;
+      // Label
+      ctx.font = '20px serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(ob.label, ob.x + ob.w / 2, ob.y - 4);
+    }
+
+    function drawGround() {
+      // Ground line
+      ctx.fillStyle = '#e94560';
+      ctx.fillRect(0, GROUND + ninja.h, 800, 4);
+      // Dotted pattern
+      ctx.fillStyle = 'rgba(233,69,96,0.3)';
+      for (let x = (frame * speed * 0.5) % 40; x < 800; x += 40) {
+        ctx.fillRect(x, GROUND + ninja.h + 8, 20, 2);
+      }
+    }
+
+    function drawStars() {
+      ctx.fillStyle = '#fff';
+      for (const s of stars) {
+        ctx.globalAlpha = 0.6 + Math.sin(frame * 0.05 + s.x) * 0.4;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawHUD() {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 22px Segoe UI';
+      ctx.textAlign = 'left';
+      ctx.fillText('Score: ' + score, 16, 32);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#ffd43b';
+      ctx.fillText('Best: ' + highScore, 784, 32);
+    }
+
+    function drawScreen(title, sub) {
+      ctx.fillStyle = 'rgba(26,26,46,0.85)';
+      ctx.fillRect(0, 0, 800, 300);
+      ctx.fillStyle = '#e94560';
+      ctx.font = 'bold 48px Segoe UI';
+      ctx.textAlign = 'center';
+      ctx.fillText(title, 400, 130);
+      ctx.fillStyle = '#aaa';
+      ctx.font = '22px Segoe UI';
+      ctx.fillText(sub, 400, 175);
+    }
+
+    // ── Collision ────────────────────────────────────────────────
+    function collides(ob) {
+      const pad = 6;
+      return ninja.x + pad < ob.x + ob.w &&
+             ninja.x + ninja.w - pad > ob.x &&
+             ninja.y + pad < ob.y + ob.h &&
+             ninja.y + ninja.h - pad > ob.y;
+    }
+
+    // ── Main loop ────────────────────────────────────────────────
+    let nextObstacle = 90;
+
+    function update() {
+      frame++;
+
+      // Stars move
+      for (const s of stars) {
+        s.x -= s.speed;
+        if (s.x < 0) s.x = 800;
+      }
+
+      if (state === 'playing') {
+        score++;
+        speed = 5 + Math.floor(score / 300) * 0.5;
+
+        // Ninja physics
+        ninja.vy += GRAVITY;
+        ninja.y += ninja.vy;
+        if (ninja.y >= GROUND) {
+          ninja.y = GROUND;
+          ninja.vy = 0;
+          ninja.onGround = true;
+          ninja.jumpCount = 0;
+        }
+
+        // Obstacles
+        nextObstacle--;
+        if (nextObstacle <= 0) {
+          spawnObstacle();
+          nextObstacle = Math.floor(Math.random() * 40) + 60 - Math.min(score / 100, 30);
+        }
+        for (const ob of obstacles) ob.x -= speed;
+        obstacles = obstacles.filter(ob => ob.x > -60);
+
+        // Collision check
+        for (const ob of obstacles) {
+          if (collides(ob)) {
+            state = 'dead';
+            if (score > highScore) highScore = score;
+            spawnDeathParticles();
+          }
+        }
+      }
+
+      // Particles
+      for (const p of particles) {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.04;
+      }
+      particles = particles.filter(p => p.life > 0);
+    }
+
+    function draw() {
+      // Background
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, 800, 300);
+
+      drawStars();
+      drawGround();
+
+      // Particles
+      for (const p of particles) {
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5 * p.life, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      for (const ob of obstacles) drawObstacle(ob);
+      if (state !== 'dead') drawNinja();
+      drawHUD();
+
+      if (state === 'idle') drawScreen('🥷 NINJA RUN', 'Leertaste oder Tippen zum Starten');
+      if (state === 'dead') drawScreen('💀 GAME OVER', `Score: ${score} — Nochmal? Leertaste drücken!`);
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  </script>
+</body>
+</html>
