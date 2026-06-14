@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -21,6 +21,44 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Update KIDS_GAMES in index.html
+        run: |
+          python3 - <<'EOF'
+          import os, json, re
+
+          kids_dir = 'kids'
+          games = []
+          for name in sorted(os.listdir(kids_dir)):
+              if name.startswith('_'):
+                  continue
+              path = os.path.join(kids_dir, name, 'index.html')
+              if not os.path.isfile(path):
+                  continue
+              with open(path, encoding='utf-8') as f:
+                  content = f.read()
+              m = re.search(r'<title>(.*?)</title>', content, re.IGNORECASE)
+              title = m.group(1).strip() if m else name
+              games.append({'name': name, 'title': title, 'path': f'kids/{name}/index.html'})
+
+          lines = [f'  {json.dumps(g, ensure_ascii=False)}' for g in games]
+          new_block = 'var KIDS_GAMES = [\n' + ',\n'.join(lines) + '\n];'
+
+          with open('index.html', encoding='utf-8') as f:
+              html = f.read()
+
+          html = re.sub(
+              r'var KIDS_GAMES = \[.*?\];',
+              new_block,
+              html,
+              flags=re.DOTALL
+          )
+
+          with open('index.html', 'w', encoding='utf-8') as f:
+              f.write(html)
+
+          print(f'Updated KIDS_GAMES with {len(games)} games')
+          EOF
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
