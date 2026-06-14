@@ -60,6 +60,11 @@
     "path": "kids/klevis/index.html"
   },
   {
+    "name": "liam",
+    "title": "Liam's Star Wars Quiz ⭐",
+    "path": "kids/liam/index.html"
+  },
+  {
     "name": "marek",
     "title": "Mareks Katze 🐱",
     "path": "kids/marek/index.html"
@@ -78,6 +83,11 @@
     "name": "mattes",
     "title": "Pong Snake 🐍🏓",
     "path": "kids/mattes/index.html"
+  },
+  {
+    "name": "max",
+    "title": "Max's Star Wars Quiz ⭐",
+    "path": "kids/max/index.html"
   },
   {
     "name": "noah",
