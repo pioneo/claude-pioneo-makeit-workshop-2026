@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flappy Furz 💨</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #87ceeb;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Arial Black', sans-serif;
+    }
+    canvas {
+      border: 4px solid #5a3e1b;
+      border-radius: 8px;
+      box-shadow: 0 8px 0 #5a3e1b, 0 0 40px rgba(0,0,0,0.4);
+      display: block;
+    }
+  </style>
+</head>
+<body>
+<canvas id="game" width="400" height="600"></canvas>
+
+<script>
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // ── State ──────────────────────────────────────────────────────
+  let state = 'idle'; // idle | playing | dead
+  let score = 0, highScore = 0, frame = 0;
+
+  // ── Furz (player) ──────────────────────────────────────────────
+  const furz = {
+    x: 90, y: H / 2, vy: 0,
+    r: 28,           // radius
+    rotation: 0,
+  };
+  const GRAVITY  = 0.45;
+  const FLAP     = -8.5;
+
+  // ── Pipes (Klos!) ──────────────────────────────────────────────
+  const GAP       = 155;
+  const PIPE_W    = 64;
+  const PIPE_SPEED = 2.6;
+  let pipes = [];
+  let pipeTimer = 0;
+
+  // ── Clouds ─────────────────────────────────────────────────────
+  let clouds = [
+    {x:80,  y:80,  w:90, s:0.4},
+    {x:220, y:140, w:70, s:0.3},
+    {x:340, y:60,  w:110,s:0.5},
+  ];
+
+  // ── Stars (score pops) ─────────────────────────────────────────
+  let pops = [];
+
+  // ── Audio (Web Audio fart sounds) ─────────────────────────────
+  const AC = new (window.AudioContext || window.webkitAudioContext)();
+
+  function playFart() {
+    const osc = AC.createOscillator();
+    const gain = AC.createGain();
+    const distort = AC.createWaveShaper();
+
+    // Waveshaper for a buzzy sound
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = (i * 2) / 256 - 1;
+      curve[i] = (Math.PI + 300) * x / (Math.PI + 300 * Math.abs(x));
+    }
+    distort.curve = curve;
+
+    osc.connect(distort);
+    distort.connect(gain);
+    gain.connect(AC.destination);
+
+    osc.type = 'sawtooth';
+    const now = AC.currentTime;
+    osc.frequency.setValueAtTime(120 + Math.random() * 60, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.25);
+    gain.gain.setValueAtTime(0.4, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+
+  function playDie() {
+    const osc = AC.createOscillator();
+    const gain = AC.createGain();
+    osc.connect(gain); gain.connect(AC.destination);
+    osc.type = 'square';
+    const now = AC.currentTime;
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.linearRampToValueAtTime(80, now + 0.4);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc.start(now); osc.stop(now + 0.4);
+  }
+
+  function playPoint() {
+    const osc = AC.createOscillator();
+    const gain = AC.createGain();
+    osc.connect(gain); gain.connect(AC.destination);
+    osc.type = 'sine';
+    const now = AC.currentTime;
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.setValueAtTime(900, now + 0.08);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc.start(now); osc.stop(now + 0.2);
+  }
+
+  // ── Input ──────────────────────────────────────────────────────
+  function flap() {
+    if (state === 'idle' || state === 'dead') { restart(); return; }
+    furz.vy = FLAP;
+    furz.rotation = -0.4;
+    playFart();
+    // Fart trail
+    for (let i = 0; i < 5; i++) {
+      pops.push({ x: furz.x - furz.r, y: furz.y + (Math.random()-0.5)*20,
+        vx: -(Math.random()*2+1), vy: (Math.random()-0.5)*2,
+        life: 1, size: Math.random()*12+6, emoji: Math.random()<0.5?'💨':'🟢' });
+    }
+  }
+
+  document.addEventListener('keydown', e => { if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();flap();} });
+  canvas.addEventListener('click', flap);
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); flap(); }, { passive: false });
+
+  // ── Restart ────────────────────────────────────────────────────
+  function restart() {
+    furz.y = H / 2; furz.vy = 0; furz.rotation = 0;
+    pipes = []; pipeTimer = 0; pops = [];
+    score = 0; frame = 0;
+    state = 'playing';
+  }
+
+  // ── Spawn pipe ─────────────────────────────────────────────────
+  function spawnPipe() {
+    const gapY = 120 + Math.random() * (H - 280);
+    pipes.push({ x: W + 10, gapY, scored: false });
+  }
+
+  // ── Draw fart cloud ────────────────────────────────────────────
+  function drawFurz(x, y, r, rot, alpha=1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+
+    // Fart cloud blobs (green gas!)
+    const blobs = [
+      {ox:0,   oy:0,   r:r},
+      {ox:-r*0.55, oy: r*0.2,  r:r*0.75},
+      {ox: r*0.55, oy: r*0.25, r:r*0.7},
+      {ox: 0,  oy:-r*0.5, r:r*0.65},
+      {ox:-r*0.3, oy:-r*0.7, r:r*0.5},
+      {ox: r*0.35,oy:-r*0.65,r:r*0.45},
+    ];
+
+    // Shadow
+    ctx.save();
+    ctx.shadowColor='rgba(0,0,0,0.25)';
+    ctx.shadowBlur=12;
+    ctx.shadowOffsetY=5;
+    for(const b of blobs){
+      ctx.beginPath();
+      ctx.arc(b.ox+3,b.oy+4,b.r,0,Math.PI*2);
+      ctx.fillStyle='rgba(0,0,0,0.15)';
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Gas body — yellow-green
+    for(const b of blobs){
+      const g=ctx.createRadialGradient(b.ox-b.r*0.3,b.oy-b.r*0.3,b.r*0.1,b.ox,b.oy,b.r);
+      g.addColorStop(0,'#d4f542');
+      g.addColorStop(0.5,'#a8d620');
+      g.addColorStop(1,'#6b9900');
+      ctx.beginPath();
+      ctx.arc(b.ox,b.oy,b.r,0,Math.PI*2);
+      ctx.fillStyle=g;
+      ctx.fill();
+    }
+
+    // Outline
+    for(const b of blobs){
+      ctx.beginPath();
+      ctx.arc(b.ox,b.oy,b.r,0,Math.PI*2);
+      ctx.strokeStyle='#3a6600';
+      ctx.lineWidth=2.5;
+      ctx.stroke();
+    }
+
+    // Eyes
+    const ex=r*0.18, ey=-r*0.12;
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(-ex,ey,r*0.22,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc( ex,ey,r*0.22,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#1a1a00';
+    ctx.beginPath();ctx.arc(-ex+r*0.04,ey+r*0.04,r*0.12,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc( ex+r*0.04,ey+r*0.04,r*0.12,0,Math.PI*2);ctx.fill();
+    // Eyebrow (determined look)
+    ctx.strokeStyle='#3a6600'; ctx.lineWidth=2.5; ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(-ex-r*0.15,ey-r*0.25);ctx.lineTo(-ex+r*0.1,ey-r*0.18);ctx.stroke();
+    ctx.beginPath();ctx.moveTo( ex-r*0.1, ey-r*0.18);ctx.lineTo( ex+r*0.15,ey-r*0.25);ctx.stroke();
+    // Mouth (smile)
+    ctx.beginPath();ctx.arc(0,r*0.12,r*0.22,0.2,Math.PI-0.2);
+    ctx.strokeStyle='#3a6600'; ctx.lineWidth=2.5; ctx.stroke();
+
+    // Stink lines
+    ctx.strokeStyle='rgba(180,230,0,0.5)';ctx.lineWidth=1.5;
+    for(let i=0;i<3;i++){
+      const sx=(i-1)*r*0.45, startY=-r*1.1;
+      ctx.beginPath();
+      ctx.moveTo(sx,startY);
+      ctx.quadraticCurveTo(sx+r*0.2,startY-r*0.3,sx,startY-r*0.6);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  // ── Draw pipe (toilet roll style) ─────────────────────────────
+  function drawPipe(x, gapY) {
+    const topH  = gapY - GAP/2;
+    const botY  = gapY + GAP/2;
+    const botH  = H - botY;
+    const cx = x + PIPE_W/2;
+
+    function drawRoll(rx, ry, rw, rh, flipped) {
+      // Body
+      const grad = ctx.createLinearGradient(rx, 0, rx+rw, 0);
+      grad.addColorStop(0,   '#e0d0b0');
+      grad.addColorStop(0.3, '#fff8e8');
+      grad.addColorStop(0.7, '#f0e0c0');
+      grad.addColorStop(1,   '#c8b090');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect(rx, ry, rw, rh, 4);
+      ctx.fill();
+
+      // Toilet paper texture lines
+      ctx.strokeStyle = 'rgba(180,160,120,0.35)';
+      ctx.lineWidth = 1;
+      for(let ly = ry+10; ly < ry+rh; ly += 18){
+        ctx.beginPath(); ctx.moveTo(rx+4,ly); ctx.lineTo(rx+rw-4,ly); ctx.stroke();
+      }
+
+      // Outline
+      ctx.strokeStyle = '#8b6914';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(rx, ry, rw, rh, 4);
+      ctx.stroke();
+
+      // Cap (the end of the roll)
+      const capH = 20;
+      const capY = flipped ? ry : ry + rh - capH;
+      ctx.fillStyle = '#d4b870';
+      ctx.beginPath();
+      ctx.roundRect(rx - 4, capY, rw + 8, capH, 6);
+      ctx.fill();
+      ctx.strokeStyle = '#8b6914'; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(rx - 4, capY, rw + 8, capH, 6);
+      ctx.stroke();
+
+      // Emoji on cap
+      ctx.font = '14px serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🧻', cx, capY + capH/2);
+    }
+
+    if (topH > 0) drawRoll(x, 0, PIPE_W, topH, false);
+    if (botH > 0) drawRoll(x, botY, PIPE_W, botH, true);
+  }
+
+  // ── Draw background ────────────────────────────────────────────
+  function drawBG() {
+    // Sky gradient
+    const sky = ctx.createLinearGradient(0,0,0,H);
+    sky.addColorStop(0,'#87ceeb');
+    sky.addColorStop(1,'#c9e8ff');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0,0,W,H);
+
+    // Clouds
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    for(const c of clouds){
+      ctx.beginPath();
+      ctx.arc(c.x,c.y,c.w*0.4,0,Math.PI*2);
+      ctx.arc(c.x+c.w*0.3,c.y-c.w*0.15,c.w*0.3,0,Math.PI*2);
+      ctx.arc(c.x+c.w*0.55,c.y,c.w*0.35,0,Math.PI*2);
+      ctx.arc(c.x-c.w*0.25,c.y+c.w*0.05,c.w*0.28,0,Math.PI*2);
+      ctx.fill();
+    }
+
+    // Ground
+    const grd = ctx.createLinearGradient(0,H-60,0,H);
+    grd.addColorStop(0,'#8bc34a'); grd.addColorStop(1,'#558b2f');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0,H-60,W,60);
+    ctx.fillStyle='#6d4c41';
+    ctx.fillRect(0,H-18,W,18);
+    // Grass bumps
+    ctx.fillStyle='#8bc34a';
+    for(let gx=0;gx<W;gx+=22){
+      ctx.beginPath();ctx.arc(gx+11,H-60,11,Math.PI,0);ctx.fill();
+    }
+  }
+
+  // ── HUD ────────────────────────────────────────────────────────
+  function drawHUD() {
+    // Score
+    ctx.textAlign='center';
+    ctx.font='bold 52px Arial Black';
+    ctx.fillStyle='rgba(255,255,255,0.95)';
+    ctx.strokeStyle='#555';ctx.lineWidth=4;ctx.lineJoin='round';
+    ctx.strokeText(score,W/2,70);
+    ctx.fillText(score,W/2,70);
+  }
+
+  function drawOverlay(title,sub1,sub2='') {
+    ctx.fillStyle='rgba(0,0,0,0.45)';
+    ctx.fillRect(0,0,W,H);
+    const pw=340,ph=200,px=(W-pw)/2,py=(H-ph)/2;
+    // Panel
+    ctx.fillStyle='#fff8e0';
+    ctx.beginPath();ctx.roundRect(px,py,pw,ph,20);ctx.fill();
+    ctx.strokeStyle='#c8a000';ctx.lineWidth=4;
+    ctx.beginPath();ctx.roundRect(px,py,pw,ph,20);ctx.stroke();
+
+    ctx.textAlign='center';
+    ctx.font='bold 36px Arial Black';
+    ctx.fillStyle='#4a2';
+    ctx.strokeStyle='#1a5000';ctx.lineWidth=4;
+    ctx.strokeText(title,W/2,py+58);ctx.fillText(title,W/2,py+58);
+
+    ctx.font='bold 20px Arial Black';
+    ctx.fillStyle='#333';ctx.lineWidth=2;ctx.strokeStyle='#fff';
+    ctx.strokeText(sub1,W/2,py+105);ctx.fillText(sub1,W/2,py+105);
+
+    if(sub2){
+      ctx.font='bold 17px Arial';
+      ctx.fillStyle='#888';
+      ctx.fillText(sub2,W/2,py+140);
+    }
+
+    ctx.font='bold 16px Arial Black';
+    ctx.fillStyle='#c8a000';
+    ctx.fillText('Tippen zum '+(state==='idle'?'Starten':'Nochmal'),W/2,py+172);
+  }
+
+  // ── Update ─────────────────────────────────────────────────────
+  function update() {
+    frame++;
+
+    // Clouds
+    for(const c of clouds){
+      c.x -= c.s;
+      if(c.x < -c.w) c.x = W + c.w;
+    }
+
+    // Pops / trail
+    for(const p of pops){
+      p.x+=p.vx; p.y+=p.vy; p.vy-=0.06; p.life-=0.04;
+    }
+    pops = pops.filter(p=>p.life>0);
+
+    if(state!=='playing') return;
+
+    // Physics
+    furz.vy += GRAVITY;
+    furz.y  += furz.vy;
+    furz.rotation = Math.min(Math.PI/3, furz.rotation + 0.04);
+
+    // Ceiling / floor
+    if(furz.y - furz.r < 0){ furz.y = furz.r; furz.vy = 0; }
+    if(furz.y + furz.r > H - 60){ die(); return; }
+
+    // Pipes
+    pipeTimer++;
+    if(pipeTimer >= 90){ pipeTimer=0; spawnPipe(); }
+    for(const p of pipes){
+      p.x -= PIPE_SPEED;
+      // Score
+      if(!p.scored && p.x + PIPE_W < furz.x){
+        p.scored=true; score++;
+        playPoint();
+        pops.push({x:furz.x,y:furz.y-40,vx:0,vy:-2,life:1,size:28,emoji:'⭐'});
+      }
+      // Collision (furz circle vs pipe rects)
+      const cx=furz.x, cy=furz.y, r=furz.r-5;
+      const gapTop = p.gapY - GAP/2, gapBot = p.gapY + GAP/2;
+      const inX = cx+r > p.x && cx-r < p.x+PIPE_W;
+      if(inX && (cy-r < gapTop || cy+r > gapBot)){ die(); return; }
+    }
+    pipes = pipes.filter(p=>p.x > -PIPE_W-10);
+  }
+
+  function die(){
+    if(score>highScore) highScore=score;
+    playDie();
+    state='dead';
+  }
+
+  // ── Draw ───────────────────────────────────────────────────────
+  function draw() {
+    drawBG();
+
+    // Pipes
+    for(const p of pipes) drawPipe(p.x, p.gapY);
+
+    // Trail pops
+    for(const p of pops){
+      ctx.globalAlpha=p.life;
+      ctx.font=`${p.size}px serif`;
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(p.emoji,p.x,p.y);
+    }
+    ctx.globalAlpha=1;
+
+    // Player
+    drawFurz(furz.x, furz.y, furz.r, furz.rotation);
+
+    drawHUD();
+
+    if(state==='idle') drawOverlay('💨 Flappy Furz','Tippen = Furzen & Fliegen!','Weich den Klorollen aus!');
+    if(state==='dead') drawOverlay('💀 Abgestunken!',`${score} Punkte · Rekord: ${highScore}`,'');
+  }
+
+  // ── Loop ───────────────────────────────────────────────────────
+  function loop(){ update(); draw(); requestAnimationFrame(loop); }
+  loop();
+</script>
+</body>
+</html>
