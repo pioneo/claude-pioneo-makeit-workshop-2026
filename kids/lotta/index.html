@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ausmalspiel 🎨</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background: linear-gradient(135deg, #ffe0f0 0%, #e0f0ff 50%, #f0ffe0 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Arial Rounded MT Bold', 'Arial Black', sans-serif;
+      user-select: none;
+      padding: 10px;
+    }
+    h1 { font-size: 2rem; color: #ff4488; text-shadow: 2px 2px 0 #fff, 3px 3px 0 #ffaacc; margin-bottom: 8px; }
+    #app { background: #fff; border-radius: 20px; box-shadow: 0 8px 0 #ccc, 0 0 30px rgba(0,0,0,0.15); padding: 12px; display: flex; flex-direction: column; gap: 10px; max-width: 480px; width: 100%; }
+    #image-selector { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+    .img-btn { width: 68px; height: 68px; border: 3px solid #ddd; border-radius: 12px; background: #f9f9f9; cursor: pointer; font-size: 1.8rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; transition: all 0.15s; box-shadow: 0 3px 0 #ccc; }
+    .img-btn span { font-size: 0.55rem; color: #888; font-weight: bold; }
+    .img-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 0 #bbb; }
+    .img-btn.active { border-color: #ff4488; background: #fff0f6; box-shadow: 0 3px 0 #ff4488; }
+    #canvas-wrap { position: relative; display: flex; justify-content: center; }
+    canvas { border: 3px solid #eee; border-radius: 12px; cursor: cell; touch-action: none; display: block; }
+    #msg { text-align: center; font-size: 0.85rem; color: #ff4488; min-height: 1.2em; font-weight: bold; }
+    #toolbar { display: flex; gap: 8px; align-items: center; justify-content: center; }
+    .tool-btn { width: 46px; height: 46px; border: 3px solid #ddd; border-radius: 12px; background: #f5f5f5; cursor: pointer; font-size: 1.3rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 0 #bbb; transition: all 0.15s; }
+    .tool-btn:hover { transform: translateY(-2px); }
+    .tool-btn.active { border-color: #ff4488; background: #fff0f6; box-shadow: 0 3px 0 #ff4488; }
+    #size-slider { width: 80px; accent-color: #ff4488; }
+    #palette { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .color-swatch { width: 36px; height: 36px; border-radius: 50%; border: 3px solid transparent; cursor: pointer; box-shadow: 0 3px 0 rgba(0,0,0,0.2); transition: all 0.15s; }
+    .color-swatch:hover { transform: scale(1.2); }
+    .color-swatch.active { border-color: #222; transform: scale(1.25); }
+  </style>
+</head>
+<body>
+<h1>🎨 Ausmalspiel</h1>
+<div id="app">
+  <div id="image-selector"></div>
+  <div id="canvas-wrap">
+    <canvas id="canvas" width="440" height="380"></canvas>
+  </div>
+  <div id="msg">👆 Klick auf eine Fläche zum Ausmalen!</div>
+  <div id="toolbar">
+    <button class="tool-btn active" id="btn-bucket" title="Farbeimer">🪣</button>
+    <button class="tool-btn" id="btn-brush" title="Pinsel">🖌️</button>
+    <button class="tool-btn" id="btn-eraser" title="Radierer">🧹</button>
+    <input type="range" id="size-slider" min="4" max="30" value="12" title="Pinselgröße">
+    <button class="tool-btn" id="btn-clear" title="Alles löschen">🗑️</button>
+    <button class="tool-btn" id="btn-save" title="Speichern">💾</button>
+  </div>
+  <div id="palette"></div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d', {willReadFrequently: true});
+const W = canvas.width, H = canvas.height;
+
+// Two layers: color layer (painted by user) + outline layer (black lines)
+const colorLayer   = document.createElement('canvas'); colorLayer.width=W; colorLayer.height=H;
+const outlineLayer = document.createElement('canvas'); outlineLayer.width=W; outlineLayer.height=H;
+const cl = colorLayer.getContext('2d', {willReadFrequently: true});
+const ol = outlineLayer.getContext('2d', {willReadFrequently: true});
+
+// ── State ─────────────────────────────────────────────────────────
+let currentColor = '#FF0000';
+let currentTool  = 'bucket';
+let brushSize    = 12;
+let isDrawing    = false;
+
+// ── Palette ───────────────────────────────────────────────────────
+const COLORS = [
+  '#FF0000','#FF6600','#FFAA00','#FFE600','#AADD00','#00CC00',
+  '#00BBAA','#00AAFF','#0055FF','#8800FF','#FF00CC','#FF77BB',
+  '#8B4513','#FFCCAA','#FFFFFF','#AAAAAA','#555555','#111111',
+  '#FFD700','#00FFEE',
+];
+const palette = document.getElementById('palette');
+COLORS.forEach(c => {
+  const sw = document.createElement('div');
+  sw.className = 'color-swatch' + (c === currentColor ? ' active' : '');
+  sw.style.background = c;
+  if (c === '#FFFFFF') sw.style.boxShadow = '0 3px 0 #bbb, inset 0 0 0 1px #ddd';
+  sw.addEventListener('click', () => {
+    document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+    sw.classList.add('active');
+    currentColor = c;
+    if (currentTool === 'eraser') setTool('bucket');
+  });
+  palette.appendChild(sw);
+});
+
+// ── Tools ─────────────────────────────────────────────────────────
+function setTool(t) {
+  currentTool = t;
+  ['bucket','brush','eraser'].forEach(n =>
+    document.getElementById('btn-'+n).classList.toggle('active', n===t));
+  canvas.style.cursor = t==='bucket' ? 'cell' : t==='eraser' ? 'grab' : 'crosshair';
+}
+document.getElementById('btn-bucket').onclick = () => setTool('bucket');
+document.getElementById('btn-brush').onclick  = () => setTool('brush');
+document.getElementById('btn-eraser').onclick = () => setTool('eraser');
+document.getElementById('size-slider').oninput = e => brushSize = +e.target.value;
+document.getElementById('btn-clear').onclick = () => { cl.clearRect(0,0,W,H); composite(); };
+document.getElementById('btn-save').onclick  = () => {
+  composite();
+  const a = document.createElement('a');
+  a.download = 'mein-bild.png';
+  a.href = canvas.toDataURL();
+  a.click();
+};
+
+// ── Composite display ─────────────────────────────────────────────
+function composite() {
+  ctx.clearRect(0,0,W,H);
+  // White background
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0,0,W,H);
+  // Color underneath
+  ctx.drawImage(colorLayer, 0,0);
+  // Outlines on top
+  ctx.drawImage(outlineLayer, 0,0);
+}
+
+// ── Outline drawing helper ────────────────────────────────────────
+// Draw ONLY black strokes (no fills) so flood fill can flow inside closed shapes
+function stroke(fn, lw=4, color='#111') {
+  ol.save();
+  ol.strokeStyle = color;
+  ol.lineWidth   = lw;
+  ol.lineJoin    = 'round';
+  ol.lineCap     = 'round';
+  ol.beginPath();
+  fn(ol);
+  ol.stroke();
+  ol.restore();
+}
+function fillBlack(fn) {
+  ol.save();
+  ol.fillStyle = '#111';
+  ol.beginPath();
+  fn(ol);
+  ol.fill();
+  ol.restore();
+}
+
+// ── Images ────────────────────────────────────────────────────────
+const IMAGES = [
+  { name:'Sonne',         emoji:'☀️',  draw: drawSun },
+  { name:'Katze',         emoji:'🐱',  draw: drawCat },
+  { name:'Haus',          emoji:'🏠',  draw: drawHouse },
+  { name:'Schmetterling', emoji:'🦋',  draw: drawButterfly },
+  { name:'Rakete',        emoji:'🚀',  draw: drawRocket },
+  { name:'Fisch',         emoji:'🐟',  draw: drawFish },
+];
+
+IMAGES.forEach((img,i) => {
+  const btn = document.createElement('button');
+  btn.className = 'img-btn' + (i===0?' active':'');
+  btn.innerHTML = `${img.emoji}<span>${img.name}</span>`;
+  btn.onclick = () => {
+    document.querySelectorAll('.img-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    loadImage(i);
+  };
+  document.getElementById('image-selector').appendChild(btn);
+});
+
+// ── SUN ───────────────────────────────────────────────────────────
+function drawSun() {
+  ol.clearRect(0,0,W,H);
+  const cx=W/2, cy=H/2-30;
+  // Sun circle
+  stroke(o=>{o.arc(cx,cy,75,0,Math.PI*2);}, 5);
+  // Rays
+  for(let i=0;i<12;i++){
+    const a=i*(Math.PI*2/12);
+    const r1=82, r2=115;
+    stroke(o=>{
+      o.moveTo(cx+Math.cos(a)*r1, cy+Math.sin(a)*r1);
+      o.lineTo(cx+Math.cos(a)*r2, cy+Math.sin(a)*r2);
+    }, 5);
+  }
+  // Eyes
+  stroke(o=>{o.arc(cx-24,cy-12,12,0,Math.PI*2);}, 4);
+  stroke(o=>{o.arc(cx+24,cy-12,12,0,Math.PI*2);}, 4);
+  // Pupils (filled)
+  fillBlack(o=>{o.arc(cx-24,cy-12,5,0,Math.PI*2);});
+  fillBlack(o=>{o.arc(cx+24,cy-12,5,0,Math.PI*2);});
+  // Smile
+  stroke(o=>{o.arc(cx,cy+8,30,0.25,Math.PI-0.25);}, 4);
+  // Ground line
+  stroke(o=>{o.moveTo(0,H-60);o.lineTo(W,H-60);}, 3);
+  // Grass blades
+  for(let i=0;i<12;i++){
+    const gx=18+i*35;
+    stroke(o=>{
+      o.moveTo(gx,H-60);
+      o.quadraticCurveTo(gx+8,H-90,gx+16,H-60);
+    }, 3);
+  }
+  // Cloud left
+  stroke(o=>{
+    o.arc(90,80,28,0,Math.PI*2);
+    o.moveTo(118,80); o.arc(135,72,22,0,Math.PI*2);
+    o.moveTo(157,80); o.arc(168,80,18,0,Math.PI*2);
+    o.moveTo(62,80);  o.arc(68,88,18,0,Math.PI*2);
+  }, 4);
+  // Cloud right
+  stroke(o=>{
+    o.arc(320,65,24,0,Math.PI*2);
+    o.moveTo(344,65); o.arc(358,58,19,0,Math.PI*2);
+    o.moveTo(377,65); o.arc(385,65,16,0,Math.PI*2);
+    o.moveTo(296,65); o.arc(302,72,16,0,Math.PI*2);
+  }, 4);
+}
+
+// ── CAT ───────────────────────────────────────────────────────────
+function drawCat() {
+  ol.clearRect(0,0,W,H);
+  const cx=W/2, cy=200;
+  // Body
+  stroke(o=>{o.ellipse(cx,cy+75,75,90,0,0,Math.PI*2);}, 5);
+  // Head
+  stroke(o=>{o.arc(cx,cy-15,88,0,Math.PI*2);}, 5);
+  // Ears
+  stroke(o=>{
+    o.moveTo(cx-78,cy-70);
+    o.lineTo(cx-55,cy-130);
+    o.lineTo(cx-28,cy-75);
+  }, 5);
+  stroke(o=>{
+    o.moveTo(cx+28,cy-75);
+    o.lineTo(cx+55,cy-130);
+    o.lineTo(cx+78,cy-70);
+  }, 5);
+  // Inner ear lines
+  stroke(o=>{
+    o.moveTo(cx-68,cy-78);
+    o.lineTo(cx-52,cy-112);
+    o.lineTo(cx-38,cy-78);
+  }, 2.5, '#555');
+  stroke(o=>{
+    o.moveTo(cx+38,cy-78);
+    o.lineTo(cx+52,cy-112);
+    o.lineTo(cx+68,cy-78);
+  }, 2.5, '#555');
+  // Eyes
+  stroke(o=>{o.ellipse(cx-30,cy-20,20,16,0,0,Math.PI*2);}, 4);
+  stroke(o=>{o.ellipse(cx+30,cy-20,20,16,0,0,Math.PI*2);}, 4);
+  // Pupils
+  stroke(o=>{o.ellipse(cx-30,cy-20,8,14,0,0,Math.PI*2);}, 3, '#555');
+  stroke(o=>{o.ellipse(cx+30,cy-20,8,14,0,0,Math.PI*2);}, 3, '#555');
+  // Nose
+  stroke(o=>{
+    o.moveTo(cx,cy+6);
+    o.lineTo(cx-9,cy+18);
+    o.lineTo(cx+9,cy+18);
+    o.closePath();
+  }, 3);
+  // Mouth
+  stroke(o=>{o.moveTo(cx,cy+18);o.quadraticCurveTo(cx-20,cy+35,cx-33,cy+28);}, 3);
+  stroke(o=>{o.moveTo(cx,cy+18);o.quadraticCurveTo(cx+20,cy+35,cx+33,cy+28);}, 3);
+  // Whiskers
+  for(const s of[-1,1]){
+    stroke(o=>{o.moveTo(cx+s*10,cy+12);o.lineTo(cx+s*72,cy+5);}, 2.5);
+    stroke(o=>{o.moveTo(cx+s*10,cy+18);o.lineTo(cx+s*72,cy+18);}, 2.5);
+    stroke(o=>{o.moveTo(cx+s*10,cy+24);o.lineTo(cx+s*72,cy+31);}, 2.5);
+  }
+  // Tail (outside body)
+  stroke(o=>{
+    o.moveTo(cx+72,cy+140);
+    o.bezierCurveTo(cx+155,cy+165,cx+180,cy+55,cx+100,cy+30);
+  }, 6);
+  // Paws
+  stroke(o=>{o.ellipse(cx-48,cy+155,28,16,0,0,Math.PI*2);}, 4);
+  stroke(o=>{o.ellipse(cx+48,cy+155,28,16,0,0,Math.PI*2);}, 4);
+  // Toe lines on paws
+  stroke(o=>{o.moveTo(cx-48,cy+139);o.lineTo(cx-48,cy+155);}, 2.5, '#555');
+  stroke(o=>{o.moveTo(cx-58,cy+141);o.lineTo(cx-58,cy+155);}, 2.5, '#555');
+  stroke(o=>{o.moveTo(cx-38,cy+141);o.lineTo(cx-38,cy+155);}, 2.5, '#555');
+  stroke(o=>{o.moveTo(cx+48,cy+139);o.lineTo(cx+48,cy+155);}, 2.5, '#555');
+  stroke(o=>{o.moveTo(cx+38,cy+141);o.lineTo(cx+38,cy+155);}, 2.5, '#555');
+  stroke(o=>{o.moveTo(cx+58,cy+141);o.lineTo(cx+58,cy+155);}, 2.5, '#555');
+}
+
+// ── HOUSE ─────────────────────────────────────────────────────────
+function drawHouse() {
+  ol.clearRect(0,0,W,H);
+  const bx=55, by=175, bw=310, bh=180;
+  // Wall
+  stroke(o=>{o.rect(bx,by,bw,bh);}, 5);
+  // Roof
+  stroke(o=>{
+    o.moveTo(bx-15,by);
+    o.lineTo(W/2,by-105);
+    o.lineTo(bx+bw+15,by);
+    o.closePath();
+  }, 5);
+  // Chimney
+  stroke(o=>{o.rect(W/2+50,by-130,38,75);}, 4);
+  // Smoke puffs
+  stroke(o=>{o.arc(W/2+69,by-145,10,0,Math.PI*2);}, 3);
+  stroke(o=>{o.arc(W/2+80,by-160,8,0,Math.PI*2);}, 3);
+  stroke(o=>{o.arc(W/2+70,by-175,6,0,Math.PI*2);}, 3);
+  // Door
+  stroke(o=>{
+    o.moveTo(W/2-28,by+bh);
+    o.lineTo(W/2-28,by+bh-78);
+    o.arc(W/2,by+bh-78,28,Math.PI,0);
+    o.lineTo(W/2+28,by+bh);
+  }, 4);
+  // Door knob
+  stroke(o=>{o.arc(W/2+18,by+bh-40,5,0,Math.PI*2);}, 3);
+  // Windows
+  function win(x,y,w,h){
+    stroke(o=>{o.rect(x,y,w,h);}, 4);
+    stroke(o=>{o.moveTo(x+w/2,y);o.lineTo(x+w/2,y+h);}, 2.5, '#555');
+    stroke(o=>{o.moveTo(x,y+h/2);o.lineTo(x+w,y+h/2);}, 2.5, '#555');
+  }
+  win(80,by+25,80,70);
+  win(260,by+25,80,70);
+  // Ground
+  stroke(o=>{o.moveTo(0,by+bh);o.lineTo(W,by+bh);}, 3);
+  // Path
+  stroke(o=>{
+    o.moveTo(W/2-30,by+bh);
+    o.lineTo(W/2-50,H-5);
+    o.lineTo(W/2+50,H-5);
+    o.lineTo(W/2+30,by+bh);
+    o.closePath();
+  }, 3);
+  // Flowers
+  for(let i=0;i<5;i++){
+    const fx=75+i*70, fy=by+bh;
+    stroke(o=>{o.moveTo(fx+8,fy);o.lineTo(fx+8,fy-30);}, 2.5);
+    stroke(o=>{o.arc(fx+8,fy-40,11,0,Math.PI*2);}, 3);
+    stroke(o=>{o.arc(fx+8,fy-40,5,0,Math.PI*2);}, 2.5, '#555');
+    stroke(o=>{
+      for(let p=0;p<6;p++){
+        const a=p*Math.PI/3;
+        o.moveTo(fx+8+Math.cos(a)*11,fy-40+Math.sin(a)*11);
+        o.lineTo(fx+8+Math.cos(a)*18,fy-40+Math.sin(a)*18);
+      }
+    },2,'#555');
+  }
+  // Sun in sky
+  stroke(o=>{o.arc(380,45,32,0,Math.PI*2);}, 4);
+  for(let i=0;i<8;i++){
+    const a=i*Math.PI/4;
+    stroke(o=>{o.moveTo(380+Math.cos(a)*36,45+Math.sin(a)*36);o.lineTo(380+Math.cos(a)*50,45+Math.sin(a)*50);}, 3);
+  }
+}
+
+// ── BUTTERFLY ────────────────────────────────────────────────────
+function drawButterfly() {
+  ol.clearRect(0,0,W,H);
+  const cx=W/2, cy=H/2+5;
+  // Upper wings
+  stroke(o=>{
+    o.moveTo(cx,cy-10);
+    o.bezierCurveTo(cx-25,cy-75,cx-155,cy-135,cx-140,cy-18);
+    o.bezierCurveTo(cx-128,cy+22,cx-18,cy+12,cx,cy-10);
+    o.closePath();
+  }, 5);
+  stroke(o=>{
+    o.moveTo(cx,cy-10);
+    o.bezierCurveTo(cx+25,cy-75,cx+155,cy-135,cx+140,cy-18);
+    o.bezierCurveTo(cx+128,cy+22,cx+18,cy+12,cx,cy-10);
+    o.closePath();
+  }, 5);
+  // Lower wings
+  stroke(o=>{
+    o.moveTo(cx,cy+10);
+    o.bezierCurveTo(cx-18,cy+42,cx-148,cy+95,cx-108,cy+138);
+    o.bezierCurveTo(cx-68,cy+168,cx-18,cy+78,cx,cy+10);
+    o.closePath();
+  }, 5);
+  stroke(o=>{
+    o.moveTo(cx,cy+10);
+    o.bezierCurveTo(cx+18,cy+42,cx+148,cy+95,cx+108,cy+138);
+    o.bezierCurveTo(cx+68,cy+168,cx+18,cy+78,cx,cy+10);
+    o.closePath();
+  }, 5);
+  // Wing patterns
+  for(const s of[-1,1]){
+    stroke(o=>{o.arc(cx+s*78,cy-48,26,0,Math.PI*2);}, 3, '#444');
+    stroke(o=>{o.arc(cx+s*78,cy-48,13,0,Math.PI*2);}, 2.5, '#444');
+    stroke(o=>{o.arc(cx+s*72,cy+78,18,0,Math.PI*2);}, 3, '#444');
+    stroke(o=>{o.arc(cx+s*72,cy+78,8,0,Math.PI*2);}, 2, '#444');
+  }
+  // Body
+  stroke(o=>{o.ellipse(cx,cy,7,65,0,0,Math.PI*2);}, 4);
+  // Head
+  stroke(o=>{o.arc(cx,cy-73,14,0,Math.PI*2);}, 4);
+  // Eyes
+  fillBlack(o=>{o.arc(cx-6,cy-76,4,0,Math.PI*2);});
+  fillBlack(o=>{o.arc(cx+6,cy-76,4,0,Math.PI*2);});
+  // Antennae
+  stroke(o=>{
+    o.moveTo(cx-5,cy-84);
+    o.quadraticCurveTo(cx-38,cy-135,cx-28,cy-152);
+  }, 2.5);
+  stroke(o=>{
+    o.moveTo(cx+5,cy-84);
+    o.quadraticCurveTo(cx+38,cy-135,cx+28,cy-152);
+  }, 2.5);
+  stroke(o=>{o.arc(cx-28,cy-155,7,0,Math.PI*2);}, 3);
+  stroke(o=>{o.arc(cx+28,cy-155,7,0,Math.PI*2);}, 3);
+}
+
+// ── ROCKET ────────────────────────────────────────────────────────
+function drawRocket() {
+  ol.clearRect(0,0,W,H);
+  const cx=W/2, cy=H/2+10;
+  // Stars
+  function star(x,y,r){
+    stroke(o=>{
+      for(let i=0;i<5;i++){
+        const a=i*Math.PI*2/5-Math.PI/2, a2=a+Math.PI/5;
+        i===0?o.moveTo(x+Math.cos(a)*r,y+Math.sin(a)*r):o.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
+        o.lineTo(x+Math.cos(a2)*(r*0.42),y+Math.sin(a2)*(r*0.42));
+      }
+      o.closePath();
+    },2.5,'#888');
+  }
+  [[60,55,12],[360,75,10],[75,180,9],[390,170,11],[45,300,10],[380,310,9],[130,345,8]].forEach(([x,y,r])=>star(x,y,r));
+  // Fins
+  stroke(o=>{
+    o.moveTo(cx-37,cy+88);
+    o.lineTo(cx-80,cy+158);
+    o.lineTo(cx-37,cy+158);
+    o.closePath();
+  }, 4);
+  stroke(o=>{
+    o.moveTo(cx+37,cy+88);
+    o.lineTo(cx+80,cy+158);
+    o.lineTo(cx+37,cy+158);
+    o.closePath();
+  }, 4);
+  // Body
+  stroke(o=>{o.rect(cx-37,cy-75,74,235);}, 5);
+  // Nose cone
+  stroke(o=>{
+    o.moveTo(cx,cy-155);
+    o.lineTo(cx-37,cy-75);
+    o.lineTo(cx+37,cy-75);
+    o.closePath();
+  }, 5);
+  // Window
+  stroke(o=>{o.arc(cx,cy-18,32,0,Math.PI*2);}, 5);
+  stroke(o=>{o.arc(cx,cy-18,17,0,Math.PI*2);}, 3, '#555');
+  // Stripes
+  stroke(o=>{o.moveTo(cx-37,cy+32);o.lineTo(cx+37,cy+32);}, 3, '#555');
+  stroke(o=>{o.moveTo(cx-37,cy+72);o.lineTo(cx+37,cy+72);}, 3, '#555');
+  // Engine
+  stroke(o=>{o.rect(cx-26,cy+156,52,20);}, 4);
+  // Flames outer
+  stroke(o=>{
+    o.moveTo(cx-22,cy+176);
+    o.quadraticCurveTo(cx-12,cy+228,cx,cy+208);
+    o.quadraticCurveTo(cx+12,cy+228,cx+22,cy+176);
+  }, 4);
+  // Flames inner
+  stroke(o=>{
+    o.moveTo(cx-10,cy+178);
+    o.quadraticCurveTo(cx-4,cy+210,cx,cy+198);
+    o.quadraticCurveTo(cx+4,cy+210,cx+10,cy+178);
+  }, 3, '#888');
+}
+
+// ── FISH ──────────────────────────────────────────────────────────
+function drawFish() {
+  ol.clearRect(0,0,W,H);
+  const cx=W/2-25, cy=H/2;
+  // Bubbles
+  stroke(o=>{o.arc(335,75,16,0,Math.PI*2);}, 3);
+  stroke(o=>{o.arc(362,42,11,0,Math.PI*2);}, 3);
+  stroke(o=>{o.arc(380,95,8,0,Math.PI*2);}, 2.5);
+  stroke(o=>{o.arc(355,118,12,0,Math.PI*2);}, 3);
+  // Tail
+  stroke(o=>{
+    o.moveTo(cx+108,cy);
+    o.lineTo(cx+175,cy-62);
+    o.lineTo(cx+165,cy);
+    o.lineTo(cx+175,cy+62);
+    o.closePath();
+  }, 5);
+  // Body
+  stroke(o=>{o.ellipse(cx,cy,112,63,0,0,Math.PI*2);}, 5);
+  // Scale lines (arcs suggesting scales)
+  for(let row=0;row<3;row++){
+    for(let col=0;col<4;col++){
+      const sx=cx-60+col*38, sy=cy-20+row*20;
+      if(Math.abs(sx-cx)/112+Math.abs(sy-cy)/63<0.85)
+        stroke(o=>{o.arc(sx,sy,18,0.2,Math.PI-0.2);}, 2, '#555');
+    }
+  }
+  // Dorsal fin
+  stroke(o=>{
+    o.moveTo(cx-18,cy-63);
+    o.quadraticCurveTo(cx+5,cy-118,cx+42,cy-63);
+  }, 4);
+  // Pectoral fin
+  stroke(o=>{
+    o.moveTo(cx-8,cy+12);
+    o.quadraticCurveTo(cx-8,cy+78,cx+42,cy+60);
+    o.quadraticCurveTo(cx+22,cy+22,cx-8,cy+12);
+    o.closePath();
+  }, 4);
+  // Eye
+  stroke(o=>{o.arc(cx-60,cy-12,22,0,Math.PI*2);}, 4);
+  stroke(o=>{o.arc(cx-60,cy-12,11,0,Math.PI*2);}, 3, '#555');
+  fillBlack(o=>{o.arc(cx-63,cy-14,4,0,Math.PI*2);});
+  // Mouth
+  stroke(o=>{o.arc(cx-108,cy+10,12,0.4,Math.PI-0.4);}, 3);
+  // Water line
+  stroke(o=>{
+    o.moveTo(0,35);
+    o.bezierCurveTo(80,20,160,50,240,35);
+    o.bezierCurveTo(320,20,400,50,W,35);
+  }, 3, '#88CCFF');
+  // Seaweed
+  for(const[sx] of[[55],[145],[350],[410]]){
+    stroke(o=>{
+      o.moveTo(sx,H);
+      o.quadraticCurveTo(sx+18,H-55,sx,H-85);
+      o.quadraticCurveTo(sx-18,H-115,sx,H-145);
+    }, 4);
+    stroke(o=>{o.arc(sx,H-148,12,0,Math.PI*2);}, 3);
+  }
+  // Sand bottom
+  stroke(o=>{o.moveTo(0,H-30);o.lineTo(W,H-30);}, 3);
+  // Pebbles
+  for(const[px,py,pr] of[[80,H-15,10],[200,H-12,14],[310,H-16,9],[380,H-13,11]]){
+    stroke(o=>{o.ellipse(px,py,pr,pr*0.6,0,0,Math.PI*2);}, 3);
+  }
+}
+
+// ── Load image ────────────────────────────────────────────────────
+function loadImage(i) {
+  cl.clearRect(0,0,W,H);
+  IMAGES[i].draw();
+  composite();
+}
+
+// ── Flood fill ────────────────────────────────────────────────────
+function hexToRgb(hex){
+  const n=parseInt(hex.replace('#',''),16);
+  return [(n>>16)&255,(n>>8)&255,n&255,255];
+}
+
+function floodFill(startX, startY) {
+  // Read the display canvas to get current composite
+  const imageData = ctx.getImageData(0,0,W,H);
+  const data = imageData.data;
+
+  function idx(x,y){ return (y*W+x)*4; }
+  const si = idx(startX,startY);
+  const sr=data[si], sg=data[si+1], sb=data[si+2];
+
+  // Don't paint over dark outlines
+  if(sr<80 && sg<80 && sb<80){ return; }
+
+  const [fr,fg,fb] = hexToRgb(currentColor);
+  // Already that color (approx)
+  if(Math.abs(sr-fr)+Math.abs(sg-fg)+Math.abs(sb-fb)<20){ return; }
+
+  // We fill on the colorLayer
+  const colorData = cl.getImageData(0,0,W,H);
+  const cd = colorData.data;
+
+  // Outline layer data (stop at dark pixels)
+  const olData = ol.getImageData(0,0,W,H);
+  const od = olData.data;
+
+  function isWall(x,y){
+    const p=idx(x,y);
+    return od[p+3]>80 && od[p]<100 && od[p+1]<100 && od[p+2]<100;
+  }
+  function sameColor(x,y){
+    const p=idx(x,y);
+    return Math.abs(data[p]-sr)+Math.abs(data[p+1]-sg)+Math.abs(data[p+2]-sb)<50;
+  }
+  function alreadyFilled(x,y){
+    const p=idx(x,y);
+    return cd[p+3]>0 && Math.abs(cd[p]-fr)+Math.abs(cd[p+1]-fg)+Math.abs(cd[p+2]-fb)<20;
+  }
+
+  // Scanline fill
+  const visited = new Uint8Array(W*H);
+  const stack = [[startX,startY]];
+  visited[startY*W+startX]=1;
+  let filled=0;
+
+  while(stack.length && filled<W*H){
+    const [x,y]=stack.pop();
+    if(x<0||x>=W||y<0||y>=H) continue;
+    if(isWall(x,y)) continue;
+    if(!sameColor(x,y)) continue;
+
+    // Paint on color layer
+    const cp=idx(x,y);
+    cd[cp]=fr; cd[cp+1]=fg; cd[cp+2]=fb; cd[cp+3]=255;
+    filled++;
+
+    for(const[nx,ny] of[[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){
+      if(nx>=0&&nx<W&&ny>=0&&ny<H){
+        const vi=ny*W+nx;
+        if(!visited[vi]){ visited[vi]=1; stack.push([nx,ny]); }
+      }
+    }
+  }
+
+  cl.putImageData(colorData,0,0);
+  composite();
+  document.getElementById('msg').textContent = '✅ Super! Noch mehr ausmalen!';
+  setTimeout(()=>{ document.getElementById('msg').textContent='👆 Klick auf eine Fläche zum Ausmalen!'; },1500);
+}
+
+// ── Brush/Eraser ──────────────────────────────────────────────────
+function getPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const sx=W/rect.width, sy=H/rect.height;
+  const t=e.touches?e.touches[0]:e;
+  return [Math.round((t.clientX-rect.left)*sx), Math.round((t.clientY-rect.top)*sy)];
+}
+function doPaint(e){
+  const [x,y]=getPos(e);
+  cl.save();
+  cl.globalCompositeOperation = currentTool==='eraser' ? 'destination-out' : 'source-over';
+  cl.fillStyle=currentColor;
+  cl.beginPath(); cl.arc(x,y,brushSize/2,0,Math.PI*2); cl.fill();
+  cl.restore();
+  composite();
+}
+
+canvas.addEventListener('mousedown',e=>{
+  if(currentTool==='bucket'){ const[x,y]=getPos(e); floodFill(x,y); }
+  else { isDrawing=true; doPaint(e); }
+});
+canvas.addEventListener('mousemove', e=>{ if(isDrawing&&currentTool!=='bucket') doPaint(e); });
+canvas.addEventListener('mouseup',   ()=>isDrawing=false);
+canvas.addEventListener('mouseleave',()=>isDrawing=false);
+canvas.addEventListener('touchstart',e=>{ e.preventDefault();
+  if(currentTool==='bucket'){ const[x,y]=getPos(e); floodFill(x,y); }
+  else { isDrawing=true; doPaint(e); }
+},{passive:false});
+canvas.addEventListener('touchmove', e=>{ e.preventDefault(); if(isDrawing) doPaint(e); },{passive:false});
+canvas.addEventListener('touchend',  e=>{ e.preventDefault(); isDrawing=false; },{passive:false});
+
+// ── Init ──────────────────────────────────────────────────────────
+loadImage(0);
+</script>
+</body>
+</html>
