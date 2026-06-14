@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Henri's Survival 🧟</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d1117;min-height:100vh;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-family:'Segoe UI',sans-serif;
+    color:#fff;gap:.3rem;padding:.3rem;user-select:none}
+  h1{font-size:clamp(.9rem,3vw,1.3rem);font-weight:900;
+    background:linear-gradient(135deg,#ef4444,#f97316,#eab308);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  canvas{border-radius:6px;border:2px solid rgba(239,68,68,.3);
+    box-shadow:0 0 40px rgba(239,68,68,.15);display:block;cursor:crosshair}
+  .hint{font-size:.58rem;color:#4a3a3a;letter-spacing:.04em}
+</style>
+</head>
+<body>
+<h1>🧟 Henri's Survival</h1>
+<canvas id="c"></canvas>
+<div class="hint">WASD Bewegen · Shift Sprinten · Leertaste Springen/Ausweichen · E Schwert · Klick Schießen · R Essen · B Mauer bauen · Tab Waffe wechseln</div>
+<script>
+// ═══════════════════════════════════════════════════════
+//  HENRI'S SURVIVAL  ─  Top-Down Day/Night
+// ═══════════════════════════════════════════════════════
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+const W=700,H=460;
+cv.width=W;cv.height=H;
+
+// ── Tile IDs ───────────────────────────────────────────
+const GRASS=0,WATER=1,SAND=2,TREE=3,ROCK=4,BUSH=5;
+const TILE=28,WW=80,WH=60;
+let world=new Uint8Array(WW*WH);
+
+function wGet(x,y){if(x<0||x>=WW||y<0||y>=WH)return TREE;return world[y*WW+x];}
+function wSet(x,y,v){if(x>=0&&x<WW&&y>=0&&y<WH)world[y*WW+x]=v;}
+function tilePassable(id){return id!==TREE&&id!==ROCK;}
+
+// ── World Gen ──────────────────────────────────────────
+function genWorld(){
+  world.fill(GRASS);
+  // Water lakes
+  for(let i=0;i<7;i++){
+    const cx=6+Math.floor(Math.random()*(WW-12));
+    const cy=6+Math.floor(Math.random()*(WH-12));
+    const r=3+Math.floor(Math.random()*5);
+    for(let y=cy-r-1;y<=cy+r+1;y++)for(let x=cx-r-1;x<=cx+r+1;x++){
+      const d=Math.hypot(x-cx,y-cy);
+      if(d<r)wSet(x,y,WATER);
+      else if(d<r+1.5&&wGet(x,y)===GRASS)wSet(x,y,SAND);
+    }
+  }
+  // Trees & rocks & bushes
+  for(let y=0;y<WH;y++)for(let x=0;x<WW;x++){
+    if(wGet(x,y)!==GRASS)continue;
+    const r=Math.random();
+    if(r<.13)wSet(x,y,TREE);
+    else if(r<.17)wSet(x,y,ROCK);
+    else if(r<.23)wSet(x,y,BUSH);
+  }
+  // Clear spawn
+  const sx=Math.floor(WW/2),sy=Math.floor(WH/2);
+  for(let y=sy-4;y<=sy+4;y++)for(let x=sx-4;x<=sx+4;x++)wSet(x,y,GRASS);
+}
+genWorld();
+
+// ── Items on ground ────────────────────────────────────
+let drops=[];
+function spawnDrops(){
+  for(let i=0;i<35;i++){
+    const x=2+Math.floor(Math.random()*(WW-4));
+    const y=2+Math.floor(Math.random()*(WH-4));
+    if(tilePassable(wGet(x,y))){
+      const types=['food','food','food','ammo','wood','stone'];
+      drops.push({x:x*TILE+TILE/2,y:y*TILE+TILE/2,type:types[Math.floor(Math.random()*types.length)]});
+    }
+  }
+}
+spawnDrops();
+
+// ── Player ─────────────────────────────────────────────
+const PW=18,PH=18;
+let p={
+  x:WW/2*TILE,y:WH/2*TILE,
+  hp:100,maxHp:100,hunger:100,maxHunger:100,
+  vx:0,vy:0,
+  jumping:false,jumpZ:0,jumpVZ:0, // jump arc for top-down dodge
+  facX:0,facY:1,
+  iframes:0, // invincibility frames
+  weapon:'sword',
+  inv:{food:4,wood:0,stone:0,ammo:15},
+  swordTimer:0,
+  buildMode:false,
+};
+
+// ── Day/Night ──────────────────────────────────────────
+const DAY=60*50, NITE=60*35;
+let tick=0,night=false,dayNum=1,dayTick=DAY;
+let zombies=[],bullets=[],buildings=[],particles=[];
+let gameOver=false,score=0;
+
+// ── Input ──────────────────────────────────────────────
+const K={};
+let mx=W/2,my=H/2,lclick=false,rclick=false;
+document.addEventListener('keydown',e=>{K[e.code]=true;
+  if(['Space','Tab'].includes(e.code))e.preventDefault();
+  if(e.code==='Tab'){p.weapon=p.weapon==='sword'?'gun':'sword';}
+  if(e.code==='KeyR')eatFood();
+  if(e.code==='KeyB'&&!gameOver)p.buildMode=!p.buildMode;
+  if(e.code==='KeyE'&&!gameOver)swordAttack();
+  if(e.code==='Space'&&!gameOver)doJump();
+});
+document.addEventListener('keyup',e=>K[e.code]=false);
+cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();mx=(e.clientX-r.left)*(W/r.width);my=(e.clientY-r.top)*(H/r.height);});
+cv.addEventListener('mousedown',e=>{e.preventDefault();if(e.button===0)lclick=true;if(e.button===2)rclick=true;});
+cv.addEventListener('mouseup',e=>{if(e.button===0)lclick=false;if(e.button===2)rclick=false;});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+
+// ── Camera ─────────────────────────────────────────────
+let camX=0,camY=0;
+
+// ── Collision helpers ──────────────────────────────────
+function rectInSolid(x,y,w=PW,h=PH){
+  const corners=[[x,y],[x+w-1,y],[x,y+h-1],[x+w-1,y+h-1]];
+  for(const [cx,cy]of corners){
+    const tx=Math.floor(cx/TILE),ty=Math.floor(cy/TILE);
+    if(!tilePassable(wGet(tx,ty)))return true;
+    for(const b of buildings)if(cx>=b.x&&cx<b.x+TILE&&cy>=b.y&&cy<b.y+TILE)return true;
+  }
+  return false;
+}
+
+// ── Actions ────────────────────────────────────────────
+function swordAttack(){
+  if(p.weapon!=='sword'||p.swordTimer>0)return;
+  p.swordTimer=25;
+  // Hit zombies in arc
+  const sx=p.x+PW/2,sy=p.y+PH/2;
+  const reach=52;
+  zombies.forEach(z=>{
+    const dx=z.x-sx,dy=z.y-sy;
+    const d=Math.hypot(dx,dy);
+    if(d<reach){
+      const dot=dx/d*p.facX+dy/d*p.facY;
+      if(dot>.3){
+        z.hp-=35;
+        z.vx+=dx/d*5;z.vy+=dy/d*5;
+        spawnParticles(z.x,z.y,'#ef4444',6);
+        if(z.hp<=0)killZombie(z);
+      }
+    }
+  });
+}
+
+let shootCD=0;
+function shootGun(){
+  if(p.weapon!=='gun'||p.inv.ammo<=0||shootCD>0)return;
+  p.inv.ammo--;shootCD=15;
+  const sx=p.x+PW/2,sy=p.y+PH/2;
+  const wx=mx+camX,wy=my+camY;
+  const d=Math.hypot(wx-sx,wy-sy);
+  bullets.push({x:sx,y:sy,vx:(wx-sx)/d*12,vy:(wy-sy)/d*12,life:60});
+}
+
+function doJump(){
+  if(p.jumping)return;
+  p.jumping=true;p.jumpZ=0;p.jumpVZ=8;
+  // Dodge in movement direction
+  const dx=(K['KeyD']||K['ArrowRight']?1:0)-(K['KeyA']||K['ArrowLeft']?1:0);
+  const dy=(K['KeyS']||K['ArrowDown']?1:0)-(K['KeyW']||K['ArrowUp']?1:0);
+  p.vx=dx*9;p.vy=dy*9;
+}
+
+function eatFood(){
+  if(p.inv.food<=0)return;
+  p.inv.food--;
+  p.hunger=Math.min(p.maxHunger,p.hunger+30);
+  p.hp=Math.min(p.maxHp,p.hp+10);
+  spawnParticles(p.x+PW/2,p.y,'#22c55e',5);
+}
+
+function placeWall(){
+  if(p.inv.wood<2)return;
+  const wx=Math.floor((mx+camX)/TILE)*TILE;
+  const wy=Math.floor((my+camY)/TILE)*TILE;
+  // Not on player
+  if(mx+camX>p.x-TILE&&mx+camX<p.x+PW+TILE&&my+camY>p.y-TILE&&my+camY<p.y+PH+TILE)return;
+  // Not already occupied
+  if(buildings.find(b=>b.x===wx&&b.y===wy))return;
+  p.inv.wood-=2;
+  buildings.push({x:wx,y:wy,type:'wall'});
+}
+
+// ── Zombies ────────────────────────────────────────────
+function spawnZombies(){
+  const count=5+dayNum*3;
+  for(let i=0;i<count;i++){
+    let x,y;
+    const edge=Math.floor(Math.random()*4);
+    if(edge===0){x=Math.random()*WW*TILE;y=0;}
+    else if(edge===1){x=WW*TILE;y=Math.random()*WH*TILE;}
+    else if(edge===2){x=Math.random()*WW*TILE;y=WH*TILE;}
+    else{x=0;y=Math.random()*WH*TILE;}
+    zombies.push({x,y,hp:30+dayNum*5,maxHp:30+dayNum*5,vx:0,vy:0,hitCD:0,size:18});
+  }
+}
+
+function killZombie(z){
+  score+=10;
+  // Drop loot
+  if(Math.random()<.4)drops.push({x:z.x,y:z.y,type:'food'});
+  if(Math.random()<.3)drops.push({x:z.x,y:z.y,type:'ammo'});
+  zombies.splice(zombies.indexOf(z),1);
+}
+
+// ── Particles ──────────────────────────────────────────
+function spawnParticles(x,y,col,n){
+  for(let i=0;i<n;i++)particles.push({
+    x,y,vx:(Math.random()-.5)*5,vy:(Math.random()-.5)*5,
+    life:20,maxLife:20,col
+  });
+}
+
+// ── Update ─────────────────────────────────────────────
+let buildCD=0,lclickPrev=false;
+function update(){
+  if(gameOver)return;
+  tick++;
+
+  // Day/Night cycle
+  dayTick--;
+  if(dayTick<=0){
+    night=!night;
+    dayTick=night?NITE:DAY;
+    if(night)spawnZombies();
+    else{dayNum++;spawnDrops();}
+  }
+
+  // Player movement
+  const spd=(K['ShiftLeft']||K['ShiftRight'])&&p.hunger>10?5.5:3;
+  if(K['ShiftLeft']||K['ShiftRight']){
+    if(p.hunger>10&&(K['KeyW']||K['KeyS']||K['KeyA']||K['KeyD']||K['ArrowUp']||K['ArrowDown']||K['ArrowLeft']||K['ArrowRight']))
+      p.hunger=Math.max(0,p.hunger-.08);
+  }
+
+  let dx=0,dy=0;
+  if(K['KeyA']||K['ArrowLeft'])dx-=1;
+  if(K['KeyD']||K['ArrowRight'])dx+=1;
+  if(K['KeyW']||K['ArrowUp'])dy-=1;
+  if(K['KeyS']||K['ArrowDown'])dy+=1;
+  const len=Math.hypot(dx,dy)||1;
+
+  // Facing direction (toward mouse when shooting, else movement)
+  if(dx!==0||dy!==0){p.facX=dx/len;p.facY=dy/len;}
+  else{const wx=mx+camX-(p.x+PW/2),wy=my+camY-(p.y+PH/2);const d=Math.hypot(wx,wy)||1;p.facX=wx/d;p.facY=wy/d;}
+
+  // Jump/dodge
+  if(p.jumping){
+    p.jumpZ+=p.jumpVZ;p.jumpVZ-=1.5;
+    if(p.jumpZ<=0){p.jumping=false;p.jumpZ=0;p.vx=0;p.vy=0;}
+    p.x+=p.vx;p.y+=p.vy;
+    p.x=Math.max(0,Math.min(WW*TILE-PW,p.x));
+    p.y=Math.max(0,Math.min(WH*TILE-PH,p.y));
+  } else {
+    // Normal move with tile collision
+    const waterMul=wGet(Math.floor((p.x+PW/2)/TILE),Math.floor((p.y+PH/2)/TILE))===WATER?.45:1;
+    const mspd=spd*waterMul;
+    const nx=p.x+dx/len*mspd, ny=p.y+dy/len*mspd;
+    if(!rectInSolid(nx,p.y))p.x=nx; else {
+      // Try sliding
+      if(dx!==0&&!rectInSolid(nx,p.y))p.x=nx;
+    }
+    if(!rectInSolid(p.x,ny))p.y=ny;
+    p.x=Math.max(0,Math.min(WW*TILE-PW,p.x));
+    p.y=Math.max(0,Math.min(WH*TILE-PH,p.y));
+  }
+
+  // Camera
+  camX+=(p.x+PW/2-W/2-camX)*.13;
+  camY+=(p.y+PH/2-H/2+15-camY)*.13;
+  camX=Math.max(0,Math.min(WW*TILE-W,camX));
+  camY=Math.max(0,Math.min(WH*TILE-H,camY));
+
+  // Hunger drain
+  p.hunger=Math.max(0,p.hunger-.008);
+  if(p.hunger<=0)p.hp=Math.max(0,p.hp-.05);
+  if(p.hp<=0){gameOver=true;return;}
+
+  // Sword timer
+  if(p.swordTimer>0)p.swordTimer--;
+  if(shootCD>0)shootCD--;
+  if(p.iframes>0)p.iframes--;
+
+  // Auto shoot on click
+  if(lclick&&p.weapon==='gun')shootGun();
+
+  // Build on click (rising edge)
+  if(lclick&&!lclickPrev&&p.buildMode&&buildCD===0){placeWall();buildCD=8;}
+  if(buildCD>0)buildCD--;
+  lclickPrev=lclick;
+
+  // Bullets
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    b.x+=b.vx;b.y+=b.vy;b.life--;
+    const tx=Math.floor(b.x/TILE),ty=Math.floor(b.y/TILE);
+    if(b.life<=0||!tilePassable(wGet(tx,ty))){bullets.splice(i,1);continue;}
+    // Hit zombie
+    let hit=false;
+    for(let j=zombies.length-1;j>=0;j--){
+      const z=zombies[j];
+      if(Math.hypot(b.x-z.x,b.y-z.y)<z.size+2){
+        z.hp-=25;spawnParticles(z.x,z.y,'#ef4444',4);
+        if(z.hp<=0)killZombie(z);
+        bullets.splice(i,1);hit=true;break;
+      }
+    }
+    if(hit)continue;
+  }
+
+  // Zombies AI
+  const pCX=p.x+PW/2,pCY=p.y+PH/2;
+  for(let i=zombies.length-1;i>=0;i--){
+    const z=zombies[i];
+    // Move toward player
+    const dx=pCX-z.x,dy=pCY-z.y;
+    const d=Math.hypot(dx,dy)||1;
+    const zspd=1.2+(dayNum*.1);
+    z.x+=dx/d*zspd+z.vx;z.y+=dy/d*zspd+z.vy;
+    z.vx*=.85;z.vy*=.85;
+    // Zombie vs world
+    const tx=Math.floor(z.x/TILE),ty=Math.floor(z.y/TILE);
+    if(!tilePassable(wGet(tx,ty))){z.x-=dx/d*zspd;z.y-=dy/d*zspd;}
+    // Zombie hits player
+    if(!p.jumping&&p.iframes===0&&d<PW+z.size*.5){
+      p.hp=Math.max(0,p.hp-15);
+      p.iframes=50;
+      spawnParticles(pCX,pCY,'#ef4444',8);
+      if(p.hp<=0){gameOver=true;return;}
+    }
+  }
+
+  // Item pickup (auto within range)
+  for(let i=drops.length-1;i>=0;i--){
+    const d=drops[i];
+    if(Math.hypot(d.x-(pCX),d.y-(pCY))<20){
+      p.inv[d.type]=Math.min(99,(p.inv[d.type]||0)+1);
+      spawnParticles(d.x,d.y,'#facc15',4);
+      drops.splice(i,1);
+    }
+  }
+
+  // Particles
+  for(let i=particles.length-1;i>=0;i--){
+    const pt=particles[i];
+    pt.x+=pt.vx;pt.y+=pt.vy;pt.life--;
+    if(pt.life<=0)particles.splice(i,1);
+  }
+}
+
+// ── Draw tiles ─────────────────────────────────────────
+const TCOLS={
+  [GRASS]:['#4a7c3f','#3d6b34'],
+  [WATER]:['#1a6fa0','#1560a8'],
+  [SAND]: ['#d4b483','#c4a470'],
+  [TREE]: ['#2d5a1b','#1e3f12'],
+  [ROCK]: ['#888','#777'],
+  [BUSH]: ['#3a6b2a','#2d5520'],
+};
+
+function drawTile(id,sx,sy){
+  const c=TCOLS[id]||['#333'];
+  ctx.fillStyle=c[0];ctx.fillRect(sx,sy,TILE,TILE);
+  if(id===GRASS){
+    ctx.fillStyle=c[1];
+    ctx.fillRect(sx,sy+TILE-4,TILE,4);
+    ctx.fillRect(sx+TILE-4,sy,4,TILE);
+  }
+  if(id===WATER){
+    ctx.fillStyle='rgba(255,255,255,.08)';
+    ctx.fillRect(sx+(tick%30<15?4:0),sy+4,TILE-8,4);
+  }
+  if(id===TREE){
+    ctx.fillStyle=c[1];ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.fillStyle='#4a8c30';
+    ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2,TILE*.45,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#2d5a1b';
+    ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2+2,TILE*.32,0,Math.PI*2);ctx.fill();
+    // Trunk
+    ctx.fillStyle='#5c3d1e';ctx.fillRect(sx+TILE/2-3,sy+TILE*.55,6,TILE*.45);
+  }
+  if(id===ROCK){
+    ctx.fillStyle='#4a7c3f';ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.fillStyle=c[0];
+    ctx.beginPath();ctx.ellipse(sx+TILE/2,sy+TILE/2+2,TILE*.38,TILE*.3,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#aaa';
+    ctx.beginPath();ctx.ellipse(sx+TILE/2-3,sy+TILE/2,TILE*.22,TILE*.18,-.3,0,Math.PI*2);ctx.fill();
+  }
+  if(id===BUSH){
+    ctx.fillStyle='#4a7c3f';ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.fillStyle=c[0];
+    ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2+2,TILE*.36,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#4d8c38';
+    ctx.beginPath();ctx.arc(sx+TILE/2-4,sy+TILE/2-2,TILE*.2,0,Math.PI*2);ctx.fill();
+    // Berries
+    ctx.fillStyle='#ef4444';
+    ctx.beginPath();ctx.arc(sx+TILE*.6,sy+TILE*.55,3,0,Math.PI*2);ctx.fill();
+  }
+}
+
+// ── Draw world ─────────────────────────────────────────
+function drawWorld(){
+  const x0=Math.floor(camX/TILE),x1=Math.ceil((camX+W)/TILE)+1;
+  const y0=Math.floor(camY/TILE),y1=Math.ceil((camY+H)/TILE)+1;
+  for(let ty=y0;ty<y1;ty++)for(let tx=x0;tx<x1;tx++){
+    const id=wGet(tx,ty);
+    drawTile(id,tx*TILE-camX,ty*TILE-camY);
+  }
+}
+
+// ── Draw buildings ─────────────────────────────────────
+function drawBuildings(){
+  for(const b of buildings){
+    const sx=b.x-camX,sy=b.y-camY;
+    ctx.fillStyle='#6b7280';ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.fillStyle='#9ca3af';ctx.fillRect(sx+2,sy+2,TILE-4,6);
+    ctx.fillStyle='#4b5563';ctx.fillRect(sx,sy+TILE-3,TILE,3);ctx.fillRect(sx+TILE-3,sy,3,TILE);
+    ctx.fillStyle='rgba(255,255,255,.1)';ctx.fillRect(sx+2,sy+2,TILE-4,2);
+  }
+}
+
+// ── Draw drops ─────────────────────────────────────────
+const DCOL={food:'#ef4444',wood:'#92400e',stone:'#6b7280',ammo:'#eab308'};
+const DICON={food:'🍎',wood:'🪵',stone:'🪨',ammo:'💛'};
+function drawDrops(){
+  for(const d of drops){
+    const sx=d.x-camX,sy=d.y-camY;
+    if(sx<-20||sx>W+20||sy<-20||sy>H+20)continue;
+    // Glow
+    ctx.shadowColor=DCOL[d.type];ctx.shadowBlur=8;
+    ctx.fillStyle=DCOL[d.type];
+    ctx.beginPath();ctx.arc(sx,sy,6,0,Math.PI*2);ctx.fill();
+    ctx.shadowBlur=0;
+    // Inner
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx,sy,3,0,Math.PI*2);ctx.fill();
+  }
+}
+
+// ── Draw zombies ───────────────────────────────────────
+function drawZombies(){
+  for(const z of zombies){
+    const sx=z.x-camX,sy=z.y-camY;
+    if(sx<-40||sx>W+40||sy<-40||sy>H+40)continue;
+    const s=z.size;
+    // Body
+    ctx.fillStyle='#3d7a40';ctx.fillRect(sx-s*.4,sy-s*.4,s*.8,s*.9);
+    // Head
+    ctx.fillStyle='#4a9e50';ctx.fillRect(sx-s*.35,sy-s*.8,s*.7,s*.6);
+    // Eyes (red)
+    ctx.fillStyle='#ef4444';
+    ctx.fillRect(sx-s*.2,sy-s*.65,s*.15,s*.12);
+    ctx.fillRect(sx+s*.05,sy-s*.65,s*.15,s*.12);
+    // HP bar
+    const bw=s*.9;
+    ctx.fillStyle='#991b1b';ctx.fillRect(sx-bw/2,sy-s-8,bw,4);
+    ctx.fillStyle='#22c55e';ctx.fillRect(sx-bw/2,sy-s-8,bw*(z.hp/z.maxHp),4);
+  }
+}
+
+// ── Draw player ────────────────────────────────────────
+function drawPlayer(){
+  const sx=p.x-camX, sy=p.y-camY;
+  // Jump shadow
+  if(p.jumping){
+    const sz=p.jumpZ;
+    ctx.fillStyle='rgba(0,0,0,.35)';
+    ctx.beginPath();ctx.ellipse(sx+PW/2,sy+PH+sz*.2,PW*.6,PW*.25,0,0,Math.PI*2);ctx.fill();
+  }
+  const drawY=sy-(p.jumping?p.jumpZ:0);
+
+  // Iframes flash
+  if(p.iframes>0&&Math.floor(p.iframes/4)%2===0)return;
+
+  // Body
+  ctx.fillStyle='#16a34a';ctx.fillRect(sx+2,drawY+PH*.35,PW-4,PH*.5);
+  // Legs (walk anim)
+  const legAng=Math.sin(tick*.18)*.3*(Math.abs(p.facX)+Math.abs(p.facY)>.1?1:0);
+  ctx.fillStyle='#1d4ed8';
+  ctx.fillRect(sx+3,drawY+PH*.85+Math.sin(legAng)*4,6,PH*.25);
+  ctx.fillRect(sx+PW-9,drawY+PH*.85-Math.sin(legAng)*4,6,PH*.25);
+  // Head
+  ctx.fillStyle='#f4c089';ctx.fillRect(sx+3,drawY,PW-6,PH*.38);
+  ctx.fillStyle='#5c3d1e';ctx.fillRect(sx+3,drawY,PW-6,5);
+  // Eyes (face toward mouse)
+  const ex=sx+3+(p.facX>.0?PW*.5:2), ey=drawY+7;
+  ctx.fillStyle='#1e293b';ctx.fillRect(ex,ey,5,4);
+  ctx.fillStyle='#fff';ctx.fillRect(ex+1,ey,2,2);
+
+  // Sword attack arc
+  if(p.swordTimer>0&&p.weapon==='sword'){
+    const prog=1-p.swordTimer/25;
+    const angle=Math.atan2(p.facY,p.facX);
+    ctx.strokeStyle=`rgba(250,204,21,${1-prog})`;ctx.lineWidth=4;
+    ctx.shadowColor='#fbbf24';ctx.shadowBlur=12;
+    ctx.beginPath();ctx.arc(sx+PW/2,drawY+PH/2,42,angle-.9+prog*1.2,angle+.9+prog*.3);ctx.stroke();
+    ctx.shadowBlur=0;ctx.lineWidth=1;
+  }
+}
+
+// ── Draw bullets ───────────────────────────────────────
+function drawBullets(){
+  for(const b of bullets){
+    const sx=b.x-camX,sy=b.y-camY;
+    ctx.fillStyle='#fbbf24';ctx.shadowColor='#fbbf24';ctx.shadowBlur=6;
+    ctx.beginPath();ctx.arc(sx,sy,4,0,Math.PI*2);ctx.fill();
+    ctx.shadowBlur=0;
+  }
+}
+
+// ── Draw particles ─────────────────────────────────────
+function drawParticles(){
+  for(const pt of particles){
+    const sx=pt.x-camX,sy=pt.y-camY;
+    const a=pt.life/pt.maxLife;
+    ctx.fillStyle=pt.col;ctx.globalAlpha=a;
+    ctx.beginPath();ctx.arc(sx,sy,3*a,0,Math.PI*2);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+
+// ── Night overlay ──────────────────────────────────────
+function drawNight(){
+  const t=night?Math.min(1,(NITE-dayTick)/(NITE*.15)):Math.max(0,1-(DAY-dayTick)/(DAY*.1));
+  if(t<=0)return;
+  const alpha=t*.82;
+  const sx=p.x+PW/2-camX,sy=p.y+PH/2-camY;
+  // Full dark background
+  ctx.fillStyle=`rgba(3,7,18,${alpha})`;ctx.fillRect(0,0,W,H);
+  // Light radius around player (radial gradient punch)
+  const gr=ctx.createRadialGradient(sx,sy,15,sx,sy,160);
+  gr.addColorStop(0,'rgba(3,7,18,0)');
+  gr.addColorStop(.5,`rgba(3,7,18,${alpha*.4})`);
+  gr.addColorStop(1,`rgba(3,7,18,${alpha})`);
+  // Draw the light area (composite as "subtract" of darkness)
+  ctx.globalCompositeOperation='destination-out';
+  ctx.fillStyle=`rgba(255,255,255,${alpha})`;
+  ctx.beginPath();ctx.arc(sx,sy,160,0,Math.PI*2);ctx.fill();
+  ctx.globalCompositeOperation='source-over';
+  // Softer gradient overlay
+  ctx.fillStyle=gr;ctx.fillRect(0,0,W,H);
+  // Campfires light
+  buildings.filter(b=>b.type==='campfire').forEach(b=>{
+    const fx=b.x+TILE/2-camX,fy=b.y+TILE/2-camY;
+    const fg=ctx.createRadialGradient(fx,fy,5,fx,fy,120);
+    fg.addColorStop(0,'rgba(251,146,60,.35)');fg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=fg;ctx.fillRect(0,0,W,H);
+  });
+}
+
+// ── Build preview ──────────────────────────────────────
+function drawBuildPreview(){
+  if(!p.buildMode)return;
+  const wx=Math.floor((mx+camX)/TILE)*TILE;
+  const wy=Math.floor((my+camY)/TILE)*TILE;
+  const sx=wx-camX,sy=wy-camY;
+  ctx.strokeStyle=p.inv.wood>=2?'#22c55e':'#ef4444';ctx.lineWidth=2;
+  ctx.setLineDash([4,4]);
+  ctx.strokeRect(sx+1,sy+1,TILE-2,TILE-2);
+  ctx.fillStyle=p.inv.wood>=2?'rgba(34,197,94,.2)':'rgba(239,68,68,.2)';
+  ctx.fillRect(sx+1,sy+1,TILE-2,TILE-2);
+  ctx.setLineDash([]);ctx.lineWidth=1;
+}
+
+// ── HUD ────────────────────────────────────────────────
+function bar(x,y,w,h,val,max,col,bg='#1e293b',label=''){
+  ctx.fillStyle=bg;ctx.beginPath();ctx.roundRect(x,y,w,h,h/2);ctx.fill();
+  ctx.fillStyle=col;ctx.beginPath();ctx.roundRect(x,y,w*(val/max),h,h/2);ctx.fill();
+  if(label){ctx.fillStyle='#fff';ctx.font=`bold ${h}px Segoe UI`;ctx.textAlign='center';ctx.fillText(label,x+w/2,y+h-.5);ctx.textAlign='left';}
+}
+
+function drawHUD(){
+  // Panel BG
+  ctx.fillStyle='rgba(0,0,0,.6)';ctx.beginPath();ctx.roundRect(6,6,200,72,8);ctx.fill();
+
+  // HP
+  ctx.fillStyle='#fff';ctx.font='bold 11px Segoe UI';ctx.fillText('❤️',10,24);
+  bar(30,12,166,14,p.hp,p.maxHp,'#ef4444');
+  ctx.fillStyle='#fff';ctx.font='10px Segoe UI';ctx.fillText(Math.ceil(p.hp)+'/'+p.maxHp,132,24);
+
+  // Hunger
+  ctx.fillStyle='#fff';ctx.font='bold 11px Segoe UI';ctx.fillText('🍗',10,44);
+  bar(30,32,166,14,p.hunger,p.maxHunger,p.hunger>30?'#22c55e':'#ef4444');
+  ctx.fillStyle='#fff';ctx.font='10px Segoe UI';ctx.fillText(Math.ceil(p.hunger)+'/'+p.maxHunger,132,44);
+
+  // Day/Night bar
+  ctx.fillStyle='#fff';ctx.font='10px Segoe UI';
+  ctx.fillText(night?'🌙 Nacht':'☀️ Tag '+dayNum,10,64);
+  bar(80,54,116,12,dayTick,night?NITE:DAY,night?'#3b82f6':'#fbbf24','#374151');
+
+  // Right panel: weapon + inventory
+  ctx.fillStyle='rgba(0,0,0,.6)';ctx.beginPath();ctx.roundRect(W-168,6,162,72,8);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 12px Segoe UI';ctx.textAlign='right';
+  ctx.fillText((p.weapon==='sword'?'⚔️ Schwert':'🔫 Pistole')+(p.weapon==='gun'?' ('+p.inv.ammo+'🔸)':''),W-10,22);
+  ctx.font='11px Segoe UI';
+  ctx.fillText('🍎 '+p.inv.food+'   🪵 '+p.inv.wood+'   🪨 '+p.inv.stone,W-10,40);
+  ctx.fillText('💛 '+p.inv.ammo+'  ⭐ '+score,W-10,58);
+  ctx.font='9px Segoe UI';ctx.fillStyle='#94a3b8';
+  ctx.fillText(p.buildMode?'🔨 Baumodus  (Holz: '+p.inv.wood+')':'B = Mauer',W-10,72);
+  ctx.textAlign='left';
+
+  // Night warning
+  if(!night&&dayTick<200){
+    const a=Math.sin(tick*.15)*.5+.5;
+    ctx.fillStyle=`rgba(239,68,68,${a})`;ctx.font='bold 16px Segoe UI';ctx.textAlign='center';
+    ctx.fillText('⚠️ NACHT KOMMT BALD!',W/2,H-30);ctx.textAlign='left';
+  }
+  if(night&&zombies.length===0){
+    ctx.fillStyle='#22c55e';ctx.font='bold 14px Segoe UI';ctx.textAlign='center';
+    ctx.fillText('✅ Alle Zombies besiegt!',W/2,H-30);ctx.textAlign='left';
+  }
+}
+
+// ── Game Over ──────────────────────────────────────────
+function drawGameOver(){
+  ctx.fillStyle='rgba(0,0,0,.8)';ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#ef4444';ctx.font='bold 48px Segoe UI';ctx.fillText('💀 GAME OVER',W/2,H/2-60);
+  ctx.fillStyle='#fff';ctx.font='bold 22px Segoe UI';ctx.fillText(`Tag ${dayNum} überlebt!`,W/2,H/2-15);
+  ctx.fillStyle='#fbbf24';ctx.font='bold 18px Segoe UI';ctx.fillText(`⭐ Score: ${score}`,W/2,H/2+20);
+  ctx.fillStyle='#22c55e';ctx.font='bold 16px Segoe UI';ctx.fillText('[ R ] Nochmal spielen',W/2,H/2+60);
+  ctx.textAlign='left';
+  if(K['KeyR']){
+    // Reset
+    gameOver=false;score=0;dayNum=1;tick=0;dayTick=DAY;night=false;
+    world.fill(0);genWorld();drops=[];spawnDrops();
+    zombies=[];bullets=[];buildings=[];particles=[];
+    p.x=WW/2*TILE;p.y=WH/2*TILE;p.hp=100;p.hunger=100;
+    p.weapon='sword';p.inv={food:4,wood:0,stone:0,ammo:15};
+    p.swordTimer=0;p.iframes=0;p.jumping=false;
+    K['KeyR']=false;
+  }
+}
+
+// ── Loop ───────────────────────────────────────────────
+function loop(){
+  requestAnimationFrame(loop);
+  // Sky bg
+  const g=ctx.createLinearGradient(0,0,0,H);
+  if(night){g.addColorStop(0,'#0f172a');g.addColorStop(1,'#1e1b4b');}
+  else{g.addColorStop(0,'#60a5fa');g.addColorStop(1,'#93c5fd');}
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+  if(!gameOver)update();
+  drawWorld();
+  drawBuildings();
+  drawDrops();
+  drawZombies();
+  drawPlayer();
+  drawBullets();
+  drawParticles();
+  drawNight();
+  drawBuildPreview();
+  if(!gameOver)drawHUD();
+  else drawGameOver();
+}
+loop();
+</script>
+</body>
+</html>

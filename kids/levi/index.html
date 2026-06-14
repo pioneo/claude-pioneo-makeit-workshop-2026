@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Levi's Achterbahn 🎢</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0f1e;min-height:100vh;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-family:'Segoe UI',sans-serif;
+    color:#fff;gap:.3rem;padding:.3rem;user-select:none}
+  h1{font-size:clamp(.9rem,3vw,1.3rem);font-weight:900;
+    background:linear-gradient(135deg,#f59e0b,#ef4444,#a855f7);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  canvas{border-radius:6px;border:2px solid rgba(245,158,11,.3);
+    box-shadow:0 0 40px rgba(245,158,11,.12);display:block}
+  .hint{font-size:.6rem;color:#3a2a1a}
+</style>
+</head>
+<body>
+<h1>🎢 Levi's Achterbahn</h1>
+<canvas id="c"></canvas>
+<div class="hint">LEERTASTE = Boost &nbsp;·&nbsp; R = Neustart</div>
+<script>
+// ═══════════════════════════════════════════════════════
+//  LEVI'S ACHTERBAHN  —  Roller Coaster Physics
+// ═══════════════════════════════════════════════════════
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+const W=700,H=460;
+cv.width=W;cv.height=H;
+
+const GRAV=0.28;
+const GROUND=430;
+const LR=42;        // loop radius
+const PSTEP=7;      // points per segment step
+
+// ── Track builders ─────────────────────────────────────
+function line(x1,y1,x2,y2){
+  const pts=[];
+  const n=Math.max(2,Math.round(Math.hypot(x2-x1,y2-y1)/PSTEP));
+  for(let i=0;i<=n;i++)pts.push([x1+(x2-x1)*i/n, y1+(y2-y1)*i/n]);
+  return pts;
+}
+function loop(cx,cy,r){
+  const pts=[];
+  const n=Math.round(2*Math.PI*r/PSTEP);
+  for(let i=0;i<=n;i++){
+    const a=Math.PI/2-2*Math.PI*i/n;
+    pts.push([cx+r*Math.cos(a), cy+r*Math.sin(a)]);
+  }
+  return pts;
+}
+function cat(...segs){
+  const out=[];
+  for(let s=0;s<segs.length;s++){
+    const pts=segs[s];
+    const start=s===0?0:1;
+    for(let i=start;i<pts.length;i++)out.push(pts[i]);
+  }
+  return out;
+}
+
+// ── Track definitions ──────────────────────────────────
+// Track 1: big drop + loop → launch rightward
+const T1=cat(
+  line(20,108,  60,108),       // starting platform
+  line(60,108,  120,385),      // BIG DROP
+  line(120,385, 165,260),      // hill up
+  line(165,260, 168,300),      // smooth into loop approach
+  line(168,300, 210,385),      // down to loop bottom
+  loop(210,343,LR),            // LOOP 1  (top y=301)
+  line(210,385, 288,340)       // launch ramp
+);
+
+// Track 2: catch → valley → loop → launch
+const T2=cat(
+  line(338,318, 372,385),      // catch zone → valley
+  line(372,385, 402,385),      // flat to loop entry
+  loop(402,343,LR),            // LOOP 2
+  line(402,385, 498,288)       // launch ramp
+);
+
+// Track 3: catch → valley → loop → big finish climb
+const T3=cat(
+  line(548,258, 576,385),      // catch → valley
+  line(576,385, 605,385),      // flat to loop entry
+  loop(605,343,LR),            // LOOP 3
+  line(605,385, 688,195)       // FINAL CLIMB
+);
+
+const TRACKS=[T1,T2,T3];
+
+// Precompute loop top indices for scoring
+function findLoopTops(track){
+  const tops=[];
+  let inLoop=false,minY=Infinity,minI=0;
+  for(let i=1;i<track.length;i++){
+    const y=track[i][1];
+    // detect section where y < GROUND-100 (loop top region)
+    if(y<GROUND-150){
+      if(!inLoop){inLoop=true;minY=y;minI=i;}
+      else if(y<minY){minY=y;minI=i;}
+    } else if(inLoop){
+      tops.push(minI);
+      inLoop=false;minY=Infinity;
+    }
+  }
+  return tops;
+}
+const LOOP_TOPS=TRACKS.map(findLoopTops);
+
+// ── Cart state ─────────────────────────────────────────
+let cart={
+  ti:0,     // track index
+  pi:0.0,   // float point index along track
+  speed:2,  // px/frame along track
+  state:'track', // 'track' | 'flying' | 'done'
+  fx:0,fy:0,fvx:0,fvy:0,  // flying position/velocity
+};
+let score=0,loops=0,loopScored=[false,false,false];
+let particles=[];
+
+// ── Input ──────────────────────────────────────────────
+const K={};
+document.addEventListener('keydown',e=>{K[e.code]=true;
+  if(e.code==='Space')e.preventDefault();
+  if(e.code==='KeyR')resetGame();
+});
+document.addEventListener('keyup',e=>K[e.code]=false);
+
+function resetGame(){
+  cart={ti:0,pi:0,speed:2,state:'track',fx:0,fy:0,fvx:0,fvy:0};
+  score=0;loops=0;loopScored=[false,false,false];particles=[];
+}
+
+// ── Physics ────────────────────────────────────────────
+function ptHeight(p){return GROUND-p[1];}  // height = distance above ground
+
+function trackUpdate(){
+  const track=TRACKS[cart.ti];
+  const pi=Math.floor(cart.pi);
+  if(pi>=track.length-1){
+    // Launch!
+    const a=track[track.length-1];
+    const b=track[track.length-2];
+    const dx=a[0]-b[0],dy=a[1]-b[1];
+    const len=Math.hypot(dx,dy)||1;
+    cart.fx=a[0];cart.fy=a[1];
+    cart.fvx=dx/len*cart.speed;
+    cart.fvy=dy/len*cart.speed;
+    cart.state='flying';
+    return;
+  }
+
+  // Energy-based speed update
+  const curH=ptHeight(track[pi]);
+  const frac=cart.pi-pi;
+  const nextI=Math.min(pi+1,track.length-1);
+  const nextH=ptHeight(track[nextI]);
+  const deltaH=nextH-curH;
+
+  // Speed from energy: v²_new = v²_old + 2g*Δh
+  let v2=cart.speed*cart.speed+2*GRAV*deltaH*frac;
+  cart.speed=Math.max(0.5,Math.sqrt(Math.max(0.25,v2)));
+
+  // Boost
+  if(K['Space']){cart.speed=Math.min(cart.speed+0.15,22);}
+
+  // Advance position
+  const segLen=Math.hypot(
+    track[nextI][0]-track[pi][0],
+    track[nextI][1]-track[pi][1]
+  )||1;
+  cart.pi+=cart.speed/segLen;
+
+  // Loop scoring
+  LOOP_TOPS[cart.ti].forEach((topI,li)=>{
+    if(!loopScored[cart.ti*3+li]&&Math.abs(cart.pi-topI)<2){
+      loopScored[cart.ti*3+li]=true;
+      score+=100;loops++;
+      spawnBurst(TRACKS[cart.ti][topI][0],TRACKS[cart.ti][topI][1],'#f59e0b',16);
+    }
+  });
+
+  // Done on Track 3 end
+  if(cart.ti===2&&cart.pi>=track.length-1.5){
+    cart.state='done';
+    score+=500;
+  }
+}
+
+function flyUpdate(){
+  cart.fvy+=GRAV;
+  cart.fx+=cart.fvx;
+  cart.fy+=cart.fvy;
+
+  // Check landing on other tracks
+  for(let ti=0;ti<TRACKS.length;ti++){
+    if(ti===cart.ti)continue;
+    const track=TRACKS[ti];
+    for(let pi=0;pi<track.length-1;pi++){
+      const dx=cart.fx-track[pi][0],dy=cart.fy-track[pi][1];
+      if(Math.hypot(dx,dy)<30){
+        // Land!
+        cart.ti=ti;
+        cart.pi=pi;
+        cart.speed=Math.hypot(cart.fvx,cart.fvy);
+        cart.state='track';
+        spawnBurst(cart.fx,cart.fy,'#22c55e',12);
+        return;
+      }
+    }
+  }
+
+  // Hit ground → crash
+  if(cart.fy>GROUND+20){
+    spawnBurst(cart.fx,cart.fy,'#ef4444',20);
+    cart.state='track';
+    cart.ti=0;cart.pi=0;cart.speed=1;
+  }
+}
+
+// ── Particles ──────────────────────────────────────────
+function spawnBurst(x,y,col,n){
+  for(let i=0;i<n;i++)particles.push({
+    x,y,vx:(Math.random()-.5)*8,vy:-2-Math.random()*6,
+    life:40,ml:40,col,sz:3+Math.random()*3
+  });
+}
+
+// ── Get cart screen position ───────────────────────────
+function cartPos(){
+  if(cart.state==='flying')return {x:cart.fx,y:cart.fy,angle:Math.atan2(cart.fvy,cart.fvx)};
+  const track=TRACKS[cart.ti];
+  const pi=Math.min(Math.floor(cart.pi),track.length-2);
+  const frac=cart.pi-pi;
+  const p0=track[pi],p1=track[pi+1]||p0;
+  const x=p0[0]+(p1[0]-p0[0])*frac;
+  const y=p0[1]+(p1[1]-p0[1])*frac;
+  const angle=Math.atan2(p1[1]-p0[1],p1[0]-p0[0]);
+  return {x,y,angle};
+}
+
+// ── Draw ───────────────────────────────────────────────
+function drawBg(){
+  // Sky gradient
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1e3a6e');g.addColorStop(.6,'#3b82f6');g.addColorStop(1,'#7dd3fc');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+  // Sun
+  ctx.fillStyle='#fde68a';ctx.shadowColor='#fbbf24';ctx.shadowBlur=30;
+  ctx.beginPath();ctx.arc(W-70,55,32,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+
+  // Clouds
+  [[80,55],[220,40],[480,65],[610,45]].forEach(([cx,cy])=>{
+    ctx.fillStyle='rgba(255,255,255,.8)';
+    ctx.beginPath();ctx.arc(cx,cy,28,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(cx+25,cy-5,22,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(cx-20,cy+2,20,0,Math.PI*2);ctx.fill();
+  });
+
+  // Ground
+  ctx.fillStyle='#4a7c3f';ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.fillStyle='#3d6b34';ctx.fillRect(0,GROUND,W,8);
+}
+
+// Draw support structure for a track
+function drawSupports(track,col){
+  ctx.strokeStyle=col;ctx.lineWidth=3;
+  // Pillars every ~4 points
+  for(let i=0;i<track.length;i+=4){
+    const [x,y]=track[i];
+    if(y>GROUND-20)continue;
+    ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,GROUND);ctx.stroke();
+  }
+  // Crossbeams between nearby pillars
+  ctx.lineWidth=1.5;
+  for(let i=0;i<track.length-8;i+=8){
+    const [x1,y1]=track[i];
+    const [x2,y2]=track[i+8]||track[track.length-1];
+    if(y1>GROUND-20||y2>GROUND-20)continue;
+    const mh=Math.min(y1,y2)+Math.abs(y1-y2)/2;
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    // X brace
+    ctx.beginPath();ctx.moveTo(x1,GROUND);ctx.lineTo(x2,GROUND-Math.abs(y1-y2));ctx.stroke();
+  }
+}
+
+function drawTrack(track,col1,col2){
+  // Rail 1 (top offset)
+  const off=3;
+  ctx.strokeStyle=col1;ctx.lineWidth=4;ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  track.forEach(([x,y],i)=>{
+    const dx=i<track.length-1?(track[i+1][1]-y):0;
+    const dy=i<track.length-1?(track[i+1][0]-x):0;
+    const len=Math.hypot(dx,dy)||1;
+    const nx=-dx/len*off,ny=dy/len*off;
+    if(i===0)ctx.moveTo(x+nx,y+ny);else ctx.lineTo(x+nx,y+ny);
+  });
+  ctx.stroke();
+  // Rail 2
+  ctx.strokeStyle=col2;
+  ctx.beginPath();
+  track.forEach(([x,y],i)=>{
+    const dx=i<track.length-1?(track[i+1][1]-y):0;
+    const dy=i<track.length-1?(track[i+1][0]-x):0;
+    const len=Math.hypot(dx,dy)||1;
+    const nx=dx/len*off,ny=-dy/len*off;
+    if(i===0)ctx.moveTo(x+nx,y+ny);else ctx.lineTo(x+nx,y+ny);
+  });
+  ctx.stroke();
+  // Ties (crosspieces)
+  ctx.strokeStyle='rgba(0,0,0,.35)';ctx.lineWidth=2;
+  for(let i=0;i<track.length;i+=3){
+    const [x,y]=track[i];
+    const dx=i<track.length-1?(track[i+1][1]-y):0;
+    const dy=i<track.length-1?(track[i+1][0]-x):0;
+    const len=Math.hypot(dx,dy)||1;
+    ctx.beginPath();
+    ctx.moveTo(x-dx/len*5,y+dy/len*5);
+    ctx.lineTo(x+dx/len*5,y-dy/len*5);
+    ctx.stroke();
+  }
+}
+
+function drawCart(){
+  const {x,y,angle}=cartPos();
+  const trail=cart.state==='flying';
+  const CW=28,CH=16;
+
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+
+  // Shadow
+  if(!trail){
+    ctx.fillStyle='rgba(0,0,0,.3)';
+    ctx.beginPath();ctx.ellipse(0,CH/2+4,CW/2,5,0,0,Math.PI*2);ctx.fill();
+  }
+  // Car body
+  ctx.fillStyle='#ef4444';ctx.beginPath();ctx.roundRect(-CW/2,-CH,CW,CH,4);ctx.fill();
+  ctx.fillStyle='#dc2626';ctx.fillRect(-CW/2,-CH+2,CW,4);
+  // Stripe
+  ctx.fillStyle='#fbbf24';ctx.fillRect(-CW/2,-CH+6,CW,3);
+  // Wheels
+  ctx.fillStyle='#1e293b';
+  ctx.beginPath();ctx.arc(-CW*.3,0,5,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(CW*.3,0,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#94a3b8';
+  ctx.beginPath();ctx.arc(-CW*.3,0,2.5,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(CW*.3,0,2.5,0,Math.PI*2);ctx.fill();
+  // Passenger
+  ctx.fillStyle='#fde68a';ctx.beginPath();ctx.arc(0,-CH-5,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1e3a6e';ctx.fillRect(-4,-CH-4,8,5);
+  // Speed lines when flying
+  if(trail){
+    ctx.strokeStyle='rgba(251,191,36,.4)';ctx.lineWidth=2;
+    for(let i=0;i<3;i++){
+      ctx.beginPath();ctx.moveTo(-CW/2-5-i*8,(-CH/2)+i*5-5);
+      ctx.lineTo(-CW/2-18-i*8,(-CH/2)+i*5-5);ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function drawParticles(){
+  particles.forEach(pt=>{
+    pt.x+=pt.vx;pt.y+=pt.vy;pt.vy+=.3;pt.life--;
+    const a=pt.life/pt.ml;
+    ctx.globalAlpha=a;ctx.fillStyle=pt.col;
+    ctx.beginPath();ctx.arc(pt.x,pt.y,pt.sz*a,0,Math.PI*2);ctx.fill();
+  });
+  particles=particles.filter(p=>p.life>0);
+  ctx.globalAlpha=1;
+}
+
+function drawTrajectory(){
+  if(cart.state!=='flying')return;
+  ctx.strokeStyle='rgba(251,191,36,.3)';ctx.setLineDash([4,8]);ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(cart.fx,cart.fy);
+  let tx=cart.fx,ty=cart.fy,tvx=cart.fvx,tvy=cart.fvy;
+  for(let i=0;i<50;i++){
+    tvx*=1;tvy+=GRAV;tx+=tvx;ty+=tvy;
+    if(ty>GROUND)break;
+    ctx.lineTo(tx,ty);
+  }
+  ctx.stroke();ctx.setLineDash([]);
+}
+
+// Landing zone indicators
+function drawLandingZones(){
+  if(cart.state!=='flying')return;
+  const nextTi=cart.ti+1;
+  if(nextTi>=TRACKS.length)return;
+  const track=TRACKS[nextTi];
+  const [x,y]=track[0];
+  ctx.fillStyle='rgba(34,197,94,.25)';
+  ctx.strokeStyle='#22c55e';ctx.lineWidth=2;ctx.setLineDash([5,5]);
+  ctx.beginPath();ctx.arc(x,y,35,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#22c55e';ctx.font='bold 12px Segoe UI';ctx.textAlign='center';
+  ctx.fillText('HIER LANDEN!',x,y-42);ctx.textAlign='left';
+}
+
+// ── HUD ────────────────────────────────────────────────
+function drawHUD(){
+  const spd=cart.state==='flying'?Math.hypot(cart.fvx,cart.fvy):cart.speed;
+
+  ctx.fillStyle='rgba(0,0,0,.6)';ctx.beginPath();ctx.roundRect(6,6,220,56,8);ctx.fill();
+  ctx.fillStyle='#fbbf24';ctx.font='bold 13px Segoe UI';ctx.fillText('🎢 Levi\'s Achterbahn',12,24);
+  ctx.fillStyle='#fff';ctx.font='11px Segoe UI';
+  ctx.fillText(`⭐ Score: ${score}   🔄 Loopings: ${loops}`,12,42);
+  ctx.fillText(`🚀 Speed: ${spd.toFixed(1)} px/s`,12,56);
+
+  // Speed bar
+  ctx.fillStyle='rgba(0,0,0,.5)';ctx.beginPath();ctx.roundRect(6,62,120,6,3);ctx.fill();
+  const barW=Math.min(120,spd/20*120);
+  const barCol=spd>15?'#ef4444':spd>10?'#f59e0b':'#22c55e';
+  ctx.fillStyle=barCol;ctx.beginPath();ctx.roundRect(6,62,barW,6,3);ctx.fill();
+
+  // Track indicator
+  ctx.fillStyle='rgba(0,0,0,.55)';ctx.beginPath();ctx.roundRect(W-140,6,134,36,6);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Segoe UI';ctx.textAlign='right';
+  const phases=['Achterbahn 1️⃣','Achterbahn 2️⃣','Achterbahn 3️⃣'];
+  const phaseStr=cart.state==='flying'?'✈️ Fliegt!':(phases[cart.ti]||'Fertig! 🏆');
+  ctx.fillText(phaseStr,W-10,24);
+  ctx.fillStyle='#94a3b8';ctx.font='10px Segoe UI';
+  ctx.fillText('LEERTASTE = Boost',W-10,38);
+  ctx.textAlign='left';
+
+  if(cart.state==='done'){
+    ctx.fillStyle='rgba(0,0,0,.75)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#f59e0b';ctx.font='bold 44px Segoe UI';ctx.shadowColor='#fbbf24';ctx.shadowBlur=20;
+    ctx.fillText('🏆 ZIEL ERREICHT!',W/2,H/2-50);ctx.shadowBlur=0;
+    ctx.fillStyle='#fff';ctx.font='bold 22px Segoe UI';
+    ctx.fillText(`⭐ Score: ${score}`,W/2,H/2);
+    ctx.fillText(`🔄 ${loops} Loopings gemacht!`,W/2,H/2+35);
+    ctx.fillStyle='#22c55e';ctx.font='bold 16px Segoe UI';
+    ctx.fillText('[ R ] Nochmal fahren',W/2,H/2+80);
+    ctx.textAlign='left';
+  }
+}
+
+// ── Loop ───────────────────────────────────────────────
+const TCOLS=[
+  ['#92400e','#78350f'],  // Track 1: wooden brown
+  ['#1e3a6e','#1e40af'],  // Track 2: steel blue
+  ['#4c1d95','#7c3aed'],  // Track 3: purple/neon
+];
+const SUP_COLS=['rgba(101,79,33,.7)','rgba(30,58,110,.7)','rgba(76,29,149,.7)'];
+
+function loop_(){
+  requestAnimationFrame(loop_);
+
+  // Update
+  if(cart.state==='track')trackUpdate();
+  else if(cart.state==='flying'){flyUpdate();drawTrajectory();}
+
+  // Draw
+  drawBg();
+
+  // Draw supports
+  TRACKS.forEach((t,i)=>{
+    ctx.strokeStyle=SUP_COLS[i];
+    drawSupports(t,SUP_COLS[i]);
+  });
+
+  // Draw tracks
+  TRACKS.forEach((t,i)=>drawTrack(t,TCOLS[i][0],TCOLS[i][1]));
+
+  // Landing zones
+  drawLandingZones();
+
+  // Draw projectile path
+  if(cart.state==='flying')drawTrajectory();
+
+  drawParticles();
+  drawCart();
+  drawHUD();
+}
+loop_();
+</script>
+</body>
+</html>
