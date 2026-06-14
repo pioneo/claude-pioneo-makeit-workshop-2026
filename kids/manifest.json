@@ -55,6 +55,11 @@
     "path": "kids/jule/index.html"
   },
   {
+    "name": "klevis",
+    "title": "Hungry Snake 🍩",
+    "path": "kids/klevis/index.html"
+  },
+  {
     "name": "marek",
     "title": "Mareks Katze 🐱",
     "path": "kids/marek/index.html"
@@ -108,6 +113,11 @@
     "name": "rayan2",
     "title": "Rayan's Rocket League 2D 🚀",
     "path": "kids/rayan2/index.html"
+  },
+  {
+    "name": "sensei",
+    "title": "Ninja Run",
+    "path": "kids/sensei/index.html"
   },
   {
     "name": "souna",
