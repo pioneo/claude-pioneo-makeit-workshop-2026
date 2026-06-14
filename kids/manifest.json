@@ -1,5 +1,10 @@
 [
   {
+    "name": "amelie",
+    "title": "Gassi Gehen! 🐕",
+    "path": "kids/amelie/index.html"
+  },
+  {
     "name": "andri",
     "title": "Brawl Snake 🐍",
     "path": "kids/andri/index.html"
