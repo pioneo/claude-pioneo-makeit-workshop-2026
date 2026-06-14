@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hippie Ninja ✌️</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background: #1a0030;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Arial Black', sans-serif;
+      user-select: none;
+    }
+    #title {
+      color: #ff69b4;
+      font-size: 2rem;
+      text-shadow: 0 0 20px #ff69b4, 3px 3px 0 #330033;
+      margin-bottom: 8px;
+      letter-spacing: 3px;
+    }
+    canvas {
+      border: 4px solid #cc44ff;
+      border-radius: 10px;
+      box-shadow: 0 0 40px rgba(204,68,255,0.5), 0 8px 0 #330033;
+      display: block;
+      touch-action: none;
+    }
+    #controls {
+      color: #aaa;
+      margin-top: 8px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    #controls span { color: #ff69b4; }
+  </style>
+</head>
+<body>
+  <div id="title">✌️ HIPPIE NINJA ✌️</div>
+  <canvas id="game" width="480" height="640"></canvas>
+  <div id="controls">
+    <span>← →</span> bewegen &nbsp;|&nbsp; <span>Leertaste / Tippen</span> schießen
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// ── Audio ─────────────────────────────────────────────────────────
+const AC = new (window.AudioContext || window.webkitAudioContext)();
+function beep(freq, type, dur, vol=0.2) {
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.connect(g); g.connect(AC.destination);
+  o.type = type; o.frequency.value = freq;
+  const t = AC.currentTime;
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.start(t); o.stop(t + dur);
+}
+function shootSound() { beep(600,'square',0.07,0.15); }
+function hitSound()   { beep(180,'sawtooth',0.18,0.25); }
+function dieSound()   { beep(300,'sawtooth',0.5,0.3); setTimeout(()=>beep(150,'sawtooth',0.4,0.3),200); }
+function levelSound() { beep(500,'sine',0.1); setTimeout(()=>beep(700,'sine',0.1),120); setTimeout(()=>beep(900,'sine',0.2),240); }
+
+// ── State ─────────────────────────────────────────────────────────
+let state = 'idle'; // idle | playing | dead
+let score = 0, highScore = 0, level = 1, frame = 0, lives = 3;
+let lastTime = 0;
+
+// ── Player ────────────────────────────────────────────────────────
+const SPEED = 280; // px/sec
+const player = { x: W/2, y: H - 80, w: 48, h: 56, vx: 0, shooting: false, iframes: 0 };
+
+// ── Bullets, enemies, particles ───────────────────────────────────
+let bullets = [], enemies = [], particles = [], stars = [];
+let spawnTimer = 0, shootTimer = 0;
+
+// Keys
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') { e.preventDefault(); tryShoot(); }
+  if ((state === 'idle' || state === 'dead') && e.code === 'Space') restart();
+});
+document.addEventListener('keyup',  e => keys[e.code] = false);
+
+// Touch / click
+let touchX = null;
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (state !== 'playing') { restart(); return; }
+  touchX = e.touches[0].clientX;
+  tryShoot();
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  touchX = e.touches[0].clientX;
+}, { passive: false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); touchX = null; }, { passive: false });
+canvas.addEventListener('click', () => { if (state !== 'playing') restart(); });
+
+// Stars
+for (let i = 0; i < 80; i++)
+  stars.push({ x: Math.random()*W, y: Math.random()*H, r: Math.random()*1.5+0.3, spd: Math.random()*30+10, bright: Math.random() });
+
+// ── Restart ───────────────────────────────────────────────────────
+function restart() {
+  player.x = W/2; player.y = H-80; player.vx = 0; player.iframes = 0;
+  bullets=[]; enemies=[]; particles=[];
+  score=0; level=1; lives=3; frame=0; spawnTimer=0; shootTimer=0;
+  state='playing';
+}
+
+// ── Shoot ──────────────────────────────────────────────────────────
+function tryShoot() {
+  if (state !== 'playing') return;
+  if (shootTimer > 0) return;
+  shootTimer = 0.22;
+  shootSound();
+  // Triple shot at higher levels
+  const spread = level >= 3 ? [-18, 0, 18] : level >= 2 ? [-10, 10] : [0];
+  for (const dx of spread) {
+    bullets.push({ x: player.x + dx, y: player.y - 20, vy: -520, type: 'player', rot: 0 });
+  }
+  // Muzzle flash particle
+  particles.push({ x: player.x, y: player.y-30, vx:0, vy:-60, life:1, type:'flash', size:18 });
+}
+
+// ── Spawn enemies ──────────────────────────────────────────────────
+const ENEMY_TYPES = [
+  { type: 'suit',   hp: 1, score: 10, speed: 80,  w: 38, h: 48, shoot: false },
+  { type: 'boss',   hp: 5, score: 80, speed: 50,  w: 56, h: 64, shoot: true  },
+  { type: 'fast',   hp: 1, score: 20, speed: 160, w: 32, h: 40, shoot: false },
+];
+
+function spawnEnemy() {
+  const roll = Math.random();
+  let t;
+  if (level >= 3 && roll < 0.08) t = ENEMY_TYPES[1];      // boss
+  else if (roll < 0.25) t = ENEMY_TYPES[2];                 // fast
+  else t = ENEMY_TYPES[0];                                   // normal suit
+
+  const e = {
+    ...t,
+    x: t.w/2 + Math.random()*(W - t.w),
+    y: -t.h,
+    hp: t.hp,
+    maxHp: t.hp,
+    vx: (Math.random()-0.5) * 60,
+    vy: t.speed + level * 12,
+    shootTimer: 1.5 + Math.random()*2,
+    rot: 0, rotSpd: (Math.random()-0.5)*1.5,
+    flashTimer: 0,
+  };
+  enemies.push(e);
+}
+
+// ── Particles ──────────────────────────────────────────────────────
+function boom(x, y, color, count=12) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random()*Math.PI*2, spd = Math.random()*120+40;
+    particles.push({ x, y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd, life:1, type:'circle', color, size: Math.random()*8+4 });
+  }
+}
+function spawnEmoji(x, y, emoji) {
+  particles.push({ x, y, vx:(Math.random()-0.5)*60, vy:-80, life:1, type:'emoji', emoji, size:24 });
+}
+
+// ── Update ─────────────────────────────────────────────────────────
+function update(dt) {
+  frame++;
+
+  // Stars
+  for (const s of stars) {
+    s.y += s.spd * dt;
+    if (s.y > H) { s.y = 0; s.x = Math.random()*W; }
+  }
+
+  if (state !== 'playing') return;
+
+  // Timers
+  shootTimer = Math.max(0, shootTimer - dt);
+  if (player.iframes > 0) player.iframes -= dt;
+
+  // Player movement
+  let mvx = 0;
+  if (keys['ArrowLeft']  || keys['KeyA']) mvx -= 1;
+  if (keys['ArrowRight'] || keys['KeyD']) mvx += 1;
+  if (touchX !== null) {
+    const rect = canvas.getBoundingClientRect();
+    const tx = (touchX - rect.left) * (W / rect.width);
+    const diff = tx - player.x;
+    if (Math.abs(diff) > 10) mvx = diff > 0 ? 1 : -1;
+  }
+  player.x = Math.max(player.w/2, Math.min(W - player.w/2, player.x + mvx * SPEED * dt));
+
+  // Auto-shoot on touch hold
+  if (touchX !== null && shootTimer <= 0) tryShoot();
+
+  // Spawn enemies
+  const spawnRate = Math.max(0.4, 1.8 - level * 0.15);
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) { spawnTimer = spawnRate; spawnEnemy(); }
+
+  // Level up
+  const nextLevel = level * 300;
+  if (score >= nextLevel && score - (level-1)*300 >= 0) {
+    const newLevel = Math.floor(score / 300) + 1;
+    if (newLevel > level) { level = newLevel; levelSound(); }
+  }
+
+  // Player bullets
+  for (const b of bullets) {
+    if (b.type === 'player') { b.y += b.vy * dt; b.rot += 8 * dt; }
+    else { b.x += b.vx*dt; b.y += b.vy*dt; }
+  }
+  bullets = bullets.filter(b => b.y > -20 && b.y < H+20 && b.x > -20 && b.x < W+20);
+
+  // Enemies
+  for (const e of enemies) {
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    e.rot += e.rotSpd * dt;
+    if (e.flashTimer > 0) e.flashTimer -= dt;
+
+    // Bounce off walls
+    if (e.x < e.w/2)   { e.x = e.w/2;   e.vx = Math.abs(e.vx); }
+    if (e.x > W-e.w/2) { e.x = W-e.w/2; e.vx = -Math.abs(e.vx); }
+
+    // Enemy shoot
+    if (e.shoot) {
+      e.shootTimer -= dt;
+      if (e.shootTimer <= 0) {
+        e.shootTimer = 2 + Math.random();
+        const dx = player.x - e.x, dy = player.y - e.y;
+        const len = Math.sqrt(dx*dx+dy*dy)||1;
+        bullets.push({ x:e.x, y:e.y+e.h/2, vx:(dx/len)*200, vy:(dy/len)*200, type:'enemy' });
+      }
+    }
+
+    // Hit player with bullet
+    // (handled in bullet loop)
+
+    // Enemy reaches bottom
+    if (e.y > H + 20) {
+      e.hp = 0;
+      if (player.iframes <= 0) { lives--; player.iframes = 2; boom(player.x, player.y, '#ff4444', 8); }
+    }
+
+    // Player bullet hits enemy
+    for (const b of bullets) {
+      if (b.type !== 'player') continue;
+      if (Math.abs(b.x - e.x) < e.w/2 && Math.abs(b.y - e.y) < e.h/2) {
+        b.life = 0;
+        e.hp--;
+        e.flashTimer = 0.12;
+        if (e.hp <= 0) {
+          score += e.score;
+          hitSound();
+          boom(e.x, e.y, e.type==='boss'?'#ff9900':'#ff69b4');
+          spawnEmoji(e.x, e.y - 20, ['💐','✌️','☮️','🌈','🌸'][Math.floor(Math.random()*5)]);
+        }
+      }
+    }
+
+    // Enemy bullet hits player
+    for (const b of bullets) {
+      if (b.type !== 'enemy') continue;
+      if (Math.abs(b.x - player.x) < 18 && Math.abs(b.y - player.y) < 24 && player.iframes <= 0) {
+        b.life = 0; lives--; player.iframes = 2;
+        boom(player.x, player.y, '#ff4444', 8);
+      }
+    }
+
+    // Player touches enemy
+    if (player.iframes <= 0 &&
+        Math.abs(player.x - e.x) < (player.w/2 + e.w/2 - 6) &&
+        Math.abs(player.y - e.y) < (player.h/2 + e.h/2 - 6)) {
+      lives--; player.iframes = 2;
+      boom(player.x, player.y, '#ff4444', 8);
+    }
+  }
+
+  bullets = bullets.filter(b => (b.life ?? 1) > 0);
+  enemies = enemies.filter(e => e.hp > 0);
+
+  // Particles
+  for (const p of particles) {
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.type === 'circle') p.vy += 60 * dt;
+    p.life -= dt * (p.type==='flash' ? 8 : 1.4);
+  }
+  particles = particles.filter(p => p.life > 0);
+
+  if (lives <= 0) { dieSound(); state='dead'; if(score>highScore) highScore=score; }
+}
+
+// ── Draw helpers ──────────────────────────────────────────────────
+function drawNinja(x, y, w, h, iframes) {
+  const alpha = iframes > 0 && Math.floor(iframes*10)%2===0 ? 0.3 : 1;
+  ctx.globalAlpha = alpha;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(x, y+h/2+4, w/2, 8, 0, 0, Math.PI*2); ctx.fill();
+
+  // Body — tie-dye: purple + rainbow swirl
+  const bg = ctx.createRadialGradient(x, y, 2, x, y, w/1.5);
+  bg.addColorStop(0,   '#ff69b4');
+  bg.addColorStop(0.3, '#aa44ff');
+  bg.addColorStop(0.6, '#4488ff');
+  bg.addColorStop(1,   '#44ffaa');
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.roundRect(x-w/2, y-h/2+10, w, h-10, 8); ctx.fill();
+
+  // Peace symbol on chest
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x, y+4, 10, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y-6);  ctx.lineTo(x,y+14); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y+14); ctx.lineTo(x-8,y+6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y+14); ctx.lineTo(x+8,y+6); ctx.stroke();
+
+  // Head (ninja mask — but with hippie headband)
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(x, y-h/2+6, 18, 0, Math.PI*2); ctx.fill();
+
+  // Hippie headband (rainbow)
+  const hb = ctx.createLinearGradient(x-20, 0, x+20, 0);
+  hb.addColorStop(0, '#ff4444'); hb.addColorStop(0.33, '#ffff00');
+  hb.addColorStop(0.66, '#44ff44'); hb.addColorStop(1, '#4444ff');
+  ctx.fillStyle = hb;
+  ctx.fillRect(x-20, y-h/2-4, 40, 7);
+
+  // Flower on headband
+  ctx.font = '14px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('🌸', x, y-h/2-1);
+
+  // Eyes (calm/cool)
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.ellipse(x-6, y-h/2+8, 5, 3, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x+6, y-h/2+8, 5, 3, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#2244ff';
+  ctx.beginPath(); ctx.arc(x-6, y-h/2+8, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+6, y-h/2+8, 2.5, 0, Math.PI*2); ctx.fill();
+
+  // Scarf (flowing)
+  ctx.fillStyle = '#ff9900';
+  ctx.beginPath();
+  ctx.moveTo(x-w/2+4, y-h/2+20);
+  ctx.quadraticCurveTo(x-w/2-8, y, x-w/2+2, y+h/2-10);
+  ctx.lineTo(x-w/2+10, y+h/2-10);
+  ctx.quadraticCurveTo(x-w/2+2, y, x-w/2+14, y-h/2+20);
+  ctx.closePath(); ctx.fill();
+
+  ctx.globalAlpha = 1;
+}
+
+function drawSuitEnemy(e) {
+  const { x, y, w, h, flashTimer, hp, maxHp } = e;
+  ctx.save();
+  ctx.translate(x, y);
+
+  const flash = flashTimer > 0;
+
+  // Body — grey suit
+  ctx.fillStyle = flash ? '#ffffff' : '#444466';
+  ctx.beginPath(); ctx.roundRect(-w/2, -h/2+12, w, h-12, 6); ctx.fill();
+
+  // Tie (red)
+  ctx.fillStyle = flash ? '#fff' : '#cc2222';
+  ctx.beginPath();
+  ctx.moveTo(-5, -h/2+14); ctx.lineTo(5, -h/2+14);
+  ctx.lineTo(3, h/2-4); ctx.lineTo(-3, h/2-4); ctx.closePath(); ctx.fill();
+
+  // Head
+  ctx.fillStyle = flash ? '#fff' : '#ffdead';
+  ctx.beginPath(); ctx.arc(0, -h/2+8, 16, 0, Math.PI*2); ctx.fill();
+
+  // Angry eyebrows
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 2.5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-12,-h/2+2); ctx.lineTo(-4,-h/2+6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(12,-h/2+2);  ctx.lineTo(4,-h/2+6);  ctx.stroke();
+
+  // Eyes
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(-6,-h/2+8,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 6,-h/2+8,3,0,Math.PI*2); ctx.fill();
+
+  // Mouth (grumpy)
+  ctx.strokeStyle='#333'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(0,-h/2+14,5,0.3,Math.PI-0.3,true); ctx.stroke();
+
+  // HP bar (for boss)
+  if (maxHp > 1) {
+    ctx.fillStyle='#333'; ctx.fillRect(-w/2,-h/2-12,w,6);
+    ctx.fillStyle=`hsl(${(hp/maxHp)*120},100%,50%)`;
+    ctx.fillRect(-w/2,-h/2-12,w*(hp/maxHp),6);
+    ctx.strokeStyle='#000'; ctx.lineWidth=1;
+    ctx.strokeRect(-w/2,-h/2-12,w,6);
+    ctx.font='10px Arial Black'; ctx.fillStyle='#fff';
+    ctx.textAlign='center'; ctx.fillText('BOSS',0,-h/2-7);
+  }
+
+  ctx.restore();
+}
+
+function drawBullet(b) {
+  if (b.type === 'player') {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.rot);
+    ctx.font = '18px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('🌸', 0, 0);
+    ctx.restore();
+  } else {
+    // Enemy bullet: red energy ball
+    ctx.save();
+    ctx.shadowColor='#ff2200'; ctx.shadowBlur=12;
+    const g = ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,8);
+    g.addColorStop(0,'#fff'); g.addColorStop(0.5,'#ff6600'); g.addColorStop(1,'rgba(255,0,0,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(b.x,b.y,8,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawBG() {
+  // Psychedelic space gradient
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,   '#0d0020');
+  bg.addColorStop(0.5, '#1a0040');
+  bg.addColorStop(1,   '#000820');
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+
+  // Stars
+  for (const s of stars) {
+    ctx.globalAlpha = 0.5 + s.bright*0.5;
+    ctx.fillStyle = `hsl(${s.bright*240},80%,85%)`;
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  // Floating rainbow rings (psychedelic effect)
+  for (let i=0;i<3;i++){
+    const t=frame*0.008+i*2.1;
+    const rx=W/2+Math.cos(t)*80, ry=H/2+Math.sin(t*0.7)*120;
+    ctx.strokeStyle=`hsla(${(frame*2+i*120)%360},100%,60%,0.08)`;
+    ctx.lineWidth=20;
+    ctx.beginPath(); ctx.arc(rx,ry,60+i*30,0,Math.PI*2); ctx.stroke();
+  }
+}
+
+function drawHUD() {
+  // Score
+  ctx.font='bold 22px Arial Black';
+  ctx.fillStyle='#fff'; ctx.strokeStyle='#330033'; ctx.lineWidth=3;
+  ctx.textAlign='left';
+  ctx.strokeText(`✌️ ${score}`, 12, 32); ctx.fillText(`✌️ ${score}`, 12, 32);
+  ctx.textAlign='right';
+  ctx.fillStyle='#ffd700'; ctx.strokeStyle='#330033';
+  ctx.strokeText(`⭐ ${highScore}`, W-12, 32); ctx.fillText(`⭐ ${highScore}`, W-12, 32);
+
+  // Lives
+  ctx.textAlign='center';
+  ctx.font='20px serif';
+  let hearts='';
+  for(let i=0;i<lives;i++) hearts+='❤️';
+  ctx.fillText(hearts, W/2, 32);
+
+  // Level badge
+  ctx.font='bold 13px Arial Black';
+  ctx.fillStyle=`hsl(${frame*3%360},100%,70%)`;
+  ctx.strokeStyle='#000'; ctx.lineWidth=2; ctx.textAlign='left';
+  ctx.strokeText(`LVL ${level}`, 12, 56); ctx.fillText(`LVL ${level}`, 12, 56);
+}
+
+function drawOverlay(title, sub) {
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+  const pw=360,ph=190,px=(W-pw)/2,py=(H-ph)/2;
+  // Panel
+  const pg=ctx.createLinearGradient(px,py,px,py+ph);
+  pg.addColorStop(0,'#330066'); pg.addColorStop(1,'#110022');
+  ctx.fillStyle=pg; ctx.beginPath(); ctx.roundRect(px,py,pw,ph,20); ctx.fill();
+  ctx.strokeStyle='#cc44ff'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,20); ctx.stroke();
+
+  ctx.textAlign='center';
+  ctx.font='bold 38px Arial Black';
+  ctx.fillStyle=`hsl(${frame*4%360},100%,70%)`;
+  ctx.strokeStyle='#000'; ctx.lineWidth=4;
+  ctx.strokeText(title,W/2,py+60); ctx.fillText(title,W/2,py+60);
+
+  ctx.font='bold 20px Arial Black';
+  ctx.fillStyle='#fff'; ctx.lineWidth=2; ctx.strokeStyle='#330033';
+  ctx.strokeText(sub,W/2,py+108); ctx.fillText(sub,W/2,py+108);
+
+  ctx.font='bold 16px Arial';
+  ctx.fillStyle='#cc88ff';
+  ctx.fillText('Leertaste / Tippen zum '+(state==='idle'?'Starten':'Nochmal'),W/2,py+158);
+}
+
+// ── Draw ──────────────────────────────────────────────────────────
+function draw() {
+  drawBG();
+  for (const e of enemies) drawSuitEnemy(e);
+  for (const b of bullets) drawBullet(b);
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    if (p.type==='circle') {
+      ctx.fillStyle=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2); ctx.fill();
+    } else if (p.type==='emoji') {
+      ctx.font=`${p.size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(p.emoji,p.x,p.y);
+    } else if (p.type==='flash') {
+      ctx.fillStyle='#fffaaa';
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2); ctx.fill();
+    }
+  }
+  ctx.globalAlpha=1;
+
+  if (state!=='idle') drawNinja(player.x, player.y, player.w, player.h, player.iframes);
+  drawHUD();
+
+  if (state==='idle') drawOverlay('✌️ HIPPIE NINJA','Werf Blumen auf die Anzugtypen!');
+  if (state==='dead') drawOverlay('💀 GAME OVER',`${score} Punkte · Rekord: ${highScore}`);
+}
+
+// ── Loop ──────────────────────────────────────────────────────────
+function loop(ts) {
+  const dt = Math.min((ts - lastTime)/1000, 0.05);
+  lastTime = ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

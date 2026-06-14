@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>🍄 Luigi Kart!</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: #1a1a2e;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: 100vh;
+  font-family: 'Arial Black', Arial, sans-serif;
+  overflow: hidden;
+}
+#hud {
+  color: #fff; font-size: 18px;
+  margin-bottom: 8px;
+  display: flex; gap: 22px; align-items: center;
+}
+#hud span { text-shadow: 0 0 8px #00ff88; }
+#itemBox {
+  background: #333; border: 3px solid #ffd700;
+  border-radius: 8px; padding: 2px 12px;
+  font-size: 22px; min-width: 50px; text-align: center;
+}
+canvas { border: 4px solid #ffd700; border-radius: 12px; box-shadow: 0 0 40px #ffd70066; }
+#info { color: #aaa; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <span>⭐ <span id="score">0</span></span>
+  <span>❤️ <span id="lives">3</span></span>
+  <span>🏁 Runde <span id="laps">1</span></span>
+  <span>🎁 <div id="itemBox">—</div></span>
+  <span>💥 <span id="kills">0</span></span>
+</div>
+<canvas id="c" width="600" height="600"></canvas>
+<div id="info">↑ Gas &nbsp;|&nbsp; ← → Lenken &nbsp;|&nbsp; SPACE = Item benutzen</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 600, H = 600;
+
+// ═══════════════════════════════════════════════════════════
+//  STRECKE — Catmull-Rom Spline durch 17 Kontrollpunkte
+// ═══════════════════════════════════════════════════════════
+const TRACK_WIDTH = 112;
+const CTRL_PTS = [
+  [500, 200],   // 0  Start/Ziel-Gerade
+  [1380, 200],  // 1  Ende Hauptgerade
+  [1580, 330],  // 2  Kurve 1 Einfahrt
+  [1680, 560],  // 3  Kurve 1 Apex
+  [1560, 790],  // 4  Kurve 1 Ausfahrt
+  [1300, 880],  // 5  Kurze Gerade
+  [1090, 990],  // 6  Schikane links
+  [1040, 820],  // 7  Schikane mitte
+  [940,  990],  // 8  Schikane rechts
+  [760, 1070],  // 9  Sweeper
+  [520, 1180],  // 10 Haarnadel Einfahrt
+  [310, 1110],  // 11 Haarnadel Apex
+  [230, 900],   // 12 Haarnadel Ausfahrt
+  [295, 690],   // 13 Bergauf
+  [215, 510],   // 14 Links-Kurve
+  [330, 345],   // 15 Rückgerade
+  [430, 260],   // 16 Letzte Kurve
+];
+const N_CTRL = CTRL_PTS.length;
+const WORLD_W = 1920, WORLD_H = 1380;
+
+function catmullRom(p0, p1, p2, p3, t) {
+  const t2 = t*t, t3 = t2*t;
+  return [
+    0.5*((2*p1[0]) + (-p0[0]+p2[0])*t + (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2 + (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
+    0.5*((2*p1[1]) + (-p0[1]+p2[1])*t + (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2 + (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)
+  ];
+}
+
+const STEPS = 64;
+const TRACK_PTS = [];
+for (let i = 0; i < N_CTRL; i++) {
+  const p0 = CTRL_PTS[(i-1+N_CTRL) % N_CTRL];
+  const p1 = CTRL_PTS[i];
+  const p2 = CTRL_PTS[(i+1) % N_CTRL];
+  const p3 = CTRL_PTS[(i+2) % N_CTRL];
+  for (let s = 0; s < STEPS; s++) {
+    TRACK_PTS.push(catmullRom(p0, p1, p2, p3, s / STEPS));
+  }
+}
+const TRACK_TOTAL = TRACK_PTS.length; // 17 × 64 = 1088
+
+// Winkel jedes Strecken-Punktes
+const TRACK_ANGLES = TRACK_PTS.map((p, i) => {
+  const nxt = TRACK_PTS[(i + 1) % TRACK_TOTAL];
+  return Math.atan2(nxt[1] - p[1], nxt[0] - p[0]);
+});
+
+// Spatial Grid für schnelle Distanz-Abfragen
+const GCELL = 80;
+const GW = Math.ceil(WORLD_W / GCELL) + 1;
+const GH = Math.ceil(WORLD_H / GCELL) + 1;
+const tGrid = Array.from({length: GW * GH}, () => []);
+TRACK_PTS.forEach((p, i) => {
+  const gx = Math.min(GW-1, Math.max(0, Math.floor(p[0] / GCELL)));
+  const gy = Math.min(GH-1, Math.max(0, Math.floor(p[1] / GCELL)));
+  tGrid[gy * GW + gx].push(i);
+});
+
+function distToTrack(x, y) {
+  const gx = Math.floor(x / GCELL);
+  const gy = Math.floor(y / GCELL);
+  let best = 1e9;
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+    const nx = gx+dx, ny = gy+dy;
+    if (nx < 0 || nx >= GW || ny < 0 || ny >= GH) continue;
+    for (const idx of tGrid[ny*GW+nx]) {
+      const d = Math.hypot(x - TRACK_PTS[idx][0], y - TRACK_PTS[idx][1]);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+function nearestTrackIdx(x, y) {
+  const gx = Math.floor(x / GCELL);
+  const gy = Math.floor(y / GCELL);
+  let best = 1e9, bestIdx = 0;
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+    const nx = gx+dx, ny = gy+dy;
+    if (nx < 0 || nx >= GW || ny < 0 || ny >= GH) continue;
+    for (const idx of tGrid[ny*GW+nx]) {
+      const d = Math.hypot(x - TRACK_PTS[idx][0], y - TRACK_PTS[idx][1]);
+      if (d < best) { best = d; bestIdx = idx; }
+    }
+  }
+  return bestIdx;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WALD — Bäume generieren, die nicht auf der Strecke liegen
+// ═══════════════════════════════════════════════════════════
+const rng = (a, b) => a + Math.random() * (b - a);
+const trees = [];
+for (let attempt = 0; trees.length < 420 && attempt < 9000; attempt++) {
+  const x = rng(20, WORLD_W - 20);
+  const y = rng(20, WORLD_H - 20);
+  if (distToTrack(x, y) > TRACK_WIDTH / 2 + 22) {
+    trees.push({
+      x, y,
+      r: rng(9, 22),
+      c0: `hsl(${rng(100,135)},${rng(40,65)}%,${rng(13,24)}%)`,
+      c1: `hsl(${rng(105,140)},${rng(50,75)}%,${rng(24,38)}%)`,
+      c2: `hsl(${rng(110,145)},${rng(60,85)}%,${rng(34,52)}%)`,
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  KAMERA
+// ═══════════════════════════════════════════════════════════
+let camX = Math.max(0, Math.min(WORLD_W-W, TRACK_PTS[0][0] - W/2));
+let camY = Math.max(0, Math.min(WORLD_H-H, TRACK_PTS[0][1] - H/2));
+
+function updateCamera(px, py) {
+  camX += (px - W/2 - camX) * 0.12;
+  camY += (py - H/2 - camY) * 0.12;
+  camX = Math.max(0, Math.min(WORLD_W - W, camX));
+  camY = Math.max(0, Math.min(WORLD_H - H, camY));
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SPIELZUSTAND
+// ═══════════════════════════════════════════════════════════
+let state = 'start';
+let score = 0, lives = 3, kills = 0, laps = 1, frame = 0;
+let currentItem = null;
+let lastPlayerIdx = 0, lapCooldown = 0;
+
+// ═══════════════════════════════════════════════════════════
+//  SPIELER
+// ═══════════════════════════════════════════════════════════
+const player = {
+  x: TRACK_PTS[0][0], y: TRACK_PTS[0][1],
+  angle: TRACK_ANGLES[0],
+  speed: 0, maxSpeed: 5.2, acc: 0.18, friction: 0.91, turnSpeed: 0.054,
+  w: 32, h: 22,
+  spinning: 0, frozen: 0,
+};
+
+// ═══════════════════════════════════════════════════════════
+//  GEGNER KARTS
+// ═══════════════════════════════════════════════════════════
+const ENEMY_COLORS = ['#e74c3c','#3498db','#f39c12','#9b59b6'];
+const ENEMY_EMOJIS = ['😈','🐢','👸','🍄'];
+
+function makeEnemy(tIdx, ci) {
+  const idx = Math.floor(tIdx) % TRACK_TOTAL;
+  return {
+    x: TRACK_PTS[idx][0], y: TRACK_PTS[idx][1],
+    angle: TRACK_ANGLES[idx],
+    tIdx,
+    dIdx: 1.05 + ci * 0.12,
+    color: ENEMY_COLORS[ci], emoji: ENEMY_EMOJIS[ci],
+    frozen: 0, w: 30, h: 20
+  };
+}
+
+let enemies = [];
+function spawnEnemies() {
+  enemies = [
+    makeEnemy(0,                     0),
+    makeEnemy(TRACK_TOTAL * 0.25,    1),
+    makeEnemy(TRACK_TOTAL * 0.50,    2),
+    makeEnemy(TRACK_TOTAL * 0.75,    3),
+  ];
+}
+
+function updateEnemy(e) {
+  if (e.frozen > 0) { e.frozen--; return; }
+  e.tIdx = (e.tIdx + e.dIdx) % TRACK_TOTAL;
+  const idx = Math.floor(e.tIdx) % TRACK_TOTAL;
+  e.x = TRACK_PTS[idx][0];
+  e.y = TRACK_PTS[idx][1];
+  e.angle = TRACK_ANGLES[idx];
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ITEMS & PROJEKTILE
+// ═══════════════════════════════════════════════════════════
+let itemBoxes = [];
+function spawnItemBoxes() {
+  itemBoxes = [0.07, 0.28, 0.52, 0.77].map(t => {
+    const idx = Math.floor(t * TRACK_TOTAL);
+    return { x: TRACK_PTS[idx][0], y: TRACK_PTS[idx][1], alive: true, deadFrame: 0 };
+  });
+}
+
+let bullets = [], bananas = [], sparks = [];
+
+function useItem() {
+  if (!currentItem) return;
+  if (currentItem === 'gun' || currentItem === 'electric') {
+    const spd = 9;
+    bullets.push({
+      x: player.x + Math.cos(player.angle) * 22,
+      y: player.y + Math.sin(player.angle) * 22,
+      vx: Math.cos(player.angle) * spd,
+      vy: Math.sin(player.angle) * spd,
+      type: currentItem, life: 130
+    });
+    spawnSparks(player.x, player.y, currentItem==='electric' ? '#00aaff' : '#ff4400', 8);
+  } else if (currentItem === 'banana') {
+    bananas.push({
+      x: player.x - Math.cos(player.angle) * 28,
+      y: player.y - Math.sin(player.angle) * 28,
+      life: 700
+    });
+  }
+  currentItem = null;
+  document.getElementById('itemBox').textContent = '—';
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PARTIKEL
+// ═══════════════════════════════════════════════════════════
+function spawnSparks(x, y, col, n=12) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random()*Math.PI*2, s = 2+Math.random()*5;
+    sparks.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:25+Math.random()*20, col, size:3+Math.random()*4 });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TASTATUR
+// ═══════════════════════════════════════════════════════════
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (state === 'start') {
+      state = 'playing';
+      spawnEnemies(); spawnItemBoxes();
+    } else if (state === 'gameover') {
+      resetGame();
+    } else {
+      useItem();
+    }
+  }
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function rectHit(ax,ay,aw,ah,bx,by,bw,bh) {
+  return Math.abs(ax-bx)<(aw+bw)/2 && Math.abs(ay-by)<(ah+bh)/2;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RESET
+// ═══════════════════════════════════════════════════════════
+function resetGame() {
+  score=0; lives=3; kills=0; laps=1; frame=0; currentItem=null;
+  lapCooldown=0; lastPlayerIdx=0;
+  player.x=TRACK_PTS[0][0]; player.y=TRACK_PTS[0][1];
+  player.angle=TRACK_ANGLES[0]; player.speed=0;
+  player.spinning=0; player.frozen=0;
+  bullets=[]; bananas=[]; sparks=[];
+  document.getElementById('itemBox').textContent='—';
+  camX=Math.max(0,Math.min(WORLD_W-W, player.x-W/2));
+  camY=Math.max(0,Math.min(WORLD_H-H, player.y-H/2));
+  spawnEnemies(); spawnItemBoxes();
+  state='playing';
+}
+
+// ═══════════════════════════════════════════════════════════
+//  UPDATE
+// ═══════════════════════════════════════════════════════════
+function update() {
+  if (state !== 'playing') return;
+  frame++;
+  score++;
+
+  // Spieler-Physik
+  if (player.frozen > 0) {
+    player.frozen--;
+  } else if (player.spinning > 0) {
+    player.spinning--;
+    player.angle += 0.22;
+    player.speed *= 0.90;
+  } else {
+    const turn = player.turnSpeed * (player.speed * 0.3 + 0.5);
+    if (keys['ArrowLeft']  || keys['KeyA']) player.angle -= turn;
+    if (keys['ArrowRight'] || keys['KeyD']) player.angle += turn;
+    if (keys['ArrowUp']    || keys['KeyW']) player.speed = Math.min(player.maxSpeed, player.speed + player.acc);
+    else player.speed *= player.friction;
+  }
+
+  // Off-road bremst
+  if (distToTrack(player.x, player.y) > TRACK_WIDTH / 2) player.speed *= 0.80;
+
+  player.x += Math.cos(player.angle) * player.speed;
+  player.y += Math.sin(player.angle) * player.speed;
+  player.x = Math.max(10, Math.min(WORLD_W-10, player.x));
+  player.y = Math.max(10, Math.min(WORLD_H-10, player.y));
+
+  // Runden zählen
+  if (lapCooldown > 0) lapCooldown--;
+  const pidx = nearestTrackIdx(player.x, player.y);
+  if (lapCooldown === 0 && lastPlayerIdx > TRACK_TOTAL * 0.88 && pidx < TRACK_TOTAL * 0.12) {
+    laps++;
+    lapCooldown = 150;
+    spawnSparks(player.x, player.y, '#ffd700', 24);
+  }
+  lastPlayerIdx = pidx;
+
+  // Item-Boxen einsammeln
+  itemBoxes.forEach(b => {
+    if (!b.alive && frame - b.deadFrame > 320) b.alive = true;
+    if (b.alive && rectHit(player.x, player.y, player.w, player.h, b.x, b.y, 28, 28)) {
+      b.alive = false; b.deadFrame = frame;
+      if (!currentItem) {
+        const pool = ['gun','gun','electric','banana','banana'];
+        currentItem = pool[Math.floor(Math.random()*pool.length)];
+        document.getElementById('itemBox').textContent = {gun:'🔫',electric:'⚡',banana:'🍌'}[currentItem];
+        spawnSparks(b.x, b.y, '#ffd700', 14);
+      }
+    }
+  });
+
+  // Bananen — Spieler
+  if (player.spinning===0 && player.frozen===0) {
+    bananas = bananas.filter(ban => {
+      if (rectHit(player.x, player.y, player.w, player.h, ban.x, ban.y, 16, 16)) {
+        player.spinning=80; spawnSparks(ban.x, ban.y, '#ffe000', 10); return false;
+      }
+      return true;
+    });
+  }
+
+  // Gegner Update
+  enemies.forEach(updateEnemy);
+
+  // Gegner rammen Spieler
+  if (player.spinning===0 && player.frozen===0) {
+    enemies.forEach(e => {
+      if (rectHit(player.x, player.y, player.w-4, player.h-4, e.x, e.y, e.w-4, e.h-4)) {
+        spawnSparks(player.x, player.y, '#ff4444', 12);
+        lives--;
+        player.spinning = 90;
+        if (lives <= 0) state = 'gameover';
+      }
+    });
+  }
+
+  // Bananen — Gegner
+  enemies.forEach(e => {
+    if (e.frozen>0) return;
+    bananas = bananas.filter(ban => {
+      if (rectHit(e.x, e.y, e.w, e.h, ban.x, ban.y, 16, 16)) {
+        e.frozen=120; spawnSparks(ban.x, ban.y, '#ffe000', 10); return false;
+      }
+      return true;
+    });
+  });
+
+  // Kugeln
+  bullets = bullets.filter(b => {
+    b.x += b.vx; b.y += b.vy; b.life--;
+    if (b.life <= 0) return false;
+    for (let i = enemies.length-1; i >= 0; i--) {
+      const e = enemies[i];
+      if (rectHit(b.x, b.y, 10, 10, e.x, e.y, e.w, e.h)) {
+        if (b.type === 'electric') {
+          e.frozen = 180; spawnSparks(e.x, e.y, '#00aaff', 20);
+        } else {
+          spawnSparks(e.x, e.y, '#ff4444', 22);
+          enemies.splice(i, 1);
+          kills++; score += 200;
+          setTimeout(() => {
+            if (state==='playing') enemies.push(makeEnemy(Math.random()*TRACK_TOTAL, kills%4));
+          }, 4000);
+        }
+        return false;
+      }
+    }
+    return true;
+  });
+
+  bananas = bananas.filter(b => { b.life--; return b.life>0; });
+  sparks.forEach(p => { p.x+=p.vx; p.y+=p.vy; p.vx*=0.92; p.vy*=0.92; p.life--; });
+  sparks = sparks.filter(p => p.life>0);
+
+  updateCamera(player.x, player.y);
+
+  document.getElementById('score').textContent = score;
+  document.getElementById('lives').textContent = lives;
+  document.getElementById('laps').textContent  = laps;
+  document.getElementById('kills').textContent = kills;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ZEICHEN-HELFER
+// ═══════════════════════════════════════════════════════════
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x+r,y); c.lineTo(x+w-r,y);
+  c.quadraticCurveTo(x+w,y,x+w,y+r);
+  c.lineTo(x+w,y+h-r);
+  c.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  c.lineTo(x+r,y+h);
+  c.quadraticCurveTo(x,y+h,x,y+h-r);
+  c.lineTo(x,y+r);
+  c.quadraticCurveTo(x,y,x+r,y);
+  c.closePath();
+}
+
+function drawTree(t) {
+  // Schatten
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.beginPath(); ctx.ellipse(t.x+4, t.y+4, t.r, t.r*0.5, 0, 0, Math.PI*2); ctx.fill();
+  // Baum-Kreise (3 Schichten für Volumen)
+  ctx.fillStyle = t.c0;
+  ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = t.c1;
+  ctx.beginPath(); ctx.arc(t.x - t.r*0.18, t.y - t.r*0.12, t.r*0.75, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = t.c2;
+  ctx.beginPath(); ctx.arc(t.x - t.r*0.28, t.y - t.r*0.28, t.r*0.44, 0, Math.PI*2); ctx.fill();
+  // Stamm
+  ctx.fillStyle = '#5d3a1a';
+  ctx.fillRect(t.x - t.r*0.1, t.y + t.r*0.55, t.r*0.2, t.r*0.4);
+}
+
+function drawTrack() {
+  ctx.lineCap = ctx.lineJoin = 'round';
+
+  // Straßen-Körper
+  ctx.strokeStyle = '#8a8a8a';
+  ctx.lineWidth = TRACK_WIDTH + 8;
+  ctx.beginPath();
+  TRACK_PTS.forEach((p, i) => i===0 ? ctx.moveTo(p[0],p[1]) : ctx.lineTo(p[0],p[1]));
+  ctx.closePath(); ctx.stroke();
+
+  ctx.strokeStyle = '#b2b2b2';
+  ctx.lineWidth = TRACK_WIDTH;
+  ctx.beginPath();
+  TRACK_PTS.forEach((p, i) => i===0 ? ctx.moveTo(p[0],p[1]) : ctx.lineTo(p[0],p[1]));
+  ctx.closePath(); ctx.stroke();
+
+  // Rote Randmarkierung
+  ctx.strokeStyle = '#cc3333';
+  ctx.lineWidth = 5;
+  ctx.setLineDash([22, 14]);
+  ctx.beginPath();
+  TRACK_PTS.forEach((p, i) => i===0 ? ctx.moveTo(p[0],p[1]) : ctx.lineTo(p[0],p[1]));
+  ctx.closePath(); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Weiße Mittellinie gestrichelt
+  ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([20, 16]);
+  ctx.beginPath();
+  TRACK_PTS.forEach((p, i) => i===0 ? ctx.moveTo(p[0],p[1]) : ctx.lineTo(p[0],p[1]));
+  ctx.closePath(); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Start/Ziel-Linie (kariert)
+  const s0 = TRACK_PTS[0];
+  const perp = TRACK_ANGLES[0] + Math.PI/2;
+  ctx.save();
+  ctx.translate(s0[0], s0[1]);
+  ctx.rotate(perp);
+  const hw = TRACK_WIDTH / 2;
+  const cols = 6, rows = 2, cw = TRACK_WIDTH/cols, ch = 7;
+  for (let ci = 0; ci < cols; ci++) for (let ri = 0; ri < rows; ri++) {
+    ctx.fillStyle = (ci+ri)%2===0 ? '#fff' : '#000';
+    ctx.fillRect(-hw + ci*cw, -ch/2 + ri*(ch/2), cw, ch/2);
+  }
+  ctx.restore();
+}
+
+function drawItemBox(b) {
+  if (!b.alive) return;
+  const pulse = 1 + Math.sin(frame*0.09)*0.09;
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.rotate(frame * 0.025);
+  ctx.scale(pulse, pulse);
+  ctx.fillStyle = '#ffd700';
+  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 16;
+  roundRect(ctx, -14, -14, 28, 28, 5); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px Arial';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('?', 0, 1);
+  ctx.restore();
+}
+
+function drawLuigi(x, y, angle, frozen, spinning) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle + Math.PI/2);
+  if (frozen > 0) { ctx.shadowColor='#00aaff'; ctx.shadowBlur=16; }
+  if (spinning > 0 && Math.floor(frame/4)%2===0) ctx.globalAlpha=0.6;
+
+  const fr = frozen > 0;
+  const kartC = fr ? '#88ccff' : '#c62828';
+  const overC = fr ? '#5588dd' : '#1565c0';
+  const shrtC = fr ? '#88ccff' : '#2e7d32';
+  const hatC  = fr ? '#88ccff' : '#2e7d32';
+  const skin  = fr ? '#c8e6ff' : '#f5c18a';
+  const mustC = fr ? '#5577aa' : '#3e2723';
+
+  // Kart
+  ctx.fillStyle = kartC;
+  roundRect(ctx, -17, -7, 34, 20, 5); ctx.fill();
+  ctx.fillStyle = fr ? '#aaddff' : '#b71c1c';
+  roundRect(ctx, -11, -5, 22, 11, 3); ctx.fill();
+
+  // Räder
+  ctx.fillStyle = '#111';
+  [[-16,8],[16,8],[-14,-4],[14,-4]].forEach(([wx,wy]) => {
+    ctx.beginPath(); ctx.ellipse(wx, wy, 5.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.fillStyle = '#555';
+  [[-16,8],[16,8],[-14,-4],[14,-4]].forEach(([wx,wy]) => {
+    ctx.beginPath(); ctx.arc(wx, wy, 2, 0, Math.PI*2); ctx.fill();
+  });
+
+  // Körper
+  ctx.fillStyle = overC;
+  ctx.beginPath(); ctx.ellipse(0, 2, 9, 8, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = shrtC;
+  ctx.beginPath(); ctx.ellipse(0, -3, 7, 6, 0, 0, Math.PI*2); ctx.fill();
+
+  // Kopf
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.ellipse(0, -15, 8, 9, 0, 0, Math.PI*2); ctx.fill();
+
+  // Mütze (grün) — Rand
+  ctx.fillStyle = hatC;
+  ctx.beginPath(); ctx.ellipse(0, -20, 10, 4, 0, 0, Math.PI*2); ctx.fill();
+  // Mütze — Kuppel
+  ctx.fillRect(-7, -30, 14, 11);
+  ctx.beginPath(); ctx.arc(0, -30, 7, Math.PI, 0); ctx.fill();
+  // "L"
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 9px Arial Black';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('L', 0, -27);
+
+  // Schnurrbart
+  ctx.fillStyle = mustC;
+  ctx.beginPath(); ctx.ellipse(-4.5, -11, 4.5, 2.8, -0.25, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 4.5, -11, 4.5, 2.8,  0.25, 0, Math.PI*2); ctx.fill();
+
+  // Augen
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.ellipse(-3, -17, 2.5, 2.5, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 3, -17, 2.5, 2.5, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#1a237e';
+  ctx.beginPath(); ctx.arc(-3, -17, 1.3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 3, -17, 1.3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-2.3,-17.6,0.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( 3.7,-17.6,0.5,0,Math.PI*2); ctx.fill();
+
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.rotate(e.angle + Math.PI/2);
+  if (e.frozen > 0) { ctx.shadowColor='#00aaff'; ctx.shadowBlur=18; }
+
+  ctx.fillStyle = e.frozen > 0 ? '#88ccff' : e.color;
+  roundRect(ctx, -14, -5, 28, 16, 4); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  roundRect(ctx, -8, -3, 16, 8, 2); ctx.fill();
+
+  ctx.fillStyle = '#111';
+  [[-13,7],[13,7],[-11,-2],[11,-2]].forEach(([wx,wy]) => {
+    ctx.beginPath(); ctx.ellipse(wx, wy, 5, 3, 0, 0, Math.PI*2); ctx.fill();
+  });
+
+  // Emoji-Fahrer (immer aufrecht)
+  ctx.rotate(-(e.angle + Math.PI/2));
+  ctx.font = '14px serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(e.emoji, 0, 0);
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DRAW
+// ═══════════════════════════════════════════════════════════
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(-camX, -camY);
+
+  // Wald-Boden
+  ctx.fillStyle = '#2a5c14';
+  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+  // Gras-Textur (einfache Striche)
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.lineWidth = 1;
+
+  // Strecke
+  drawTrack();
+
+  // Bäume — nur sichtbare zeichnen
+  trees.forEach(t => {
+    if (t.x > camX - 60 && t.x < camX + W + 60 && t.y > camY - 60 && t.y < camY + H + 60)
+      drawTree(t);
+  });
+
+  // Bananen
+  bananas.forEach(b => {
+    ctx.font = '16px serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('🍌', b.x, b.y);
+  });
+
+  // Item-Boxen
+  itemBoxes.forEach(drawItemBox);
+
+  // Kugeln
+  bullets.forEach(b => {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.fillStyle = b.type==='electric' ? '#00eeff' : '#ff6600';
+    ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+
+  // Gegner
+  enemies.forEach(drawEnemy);
+
+  // Spieler Luigi
+  drawLuigi(player.x, player.y, player.angle, player.frozen, player.spinning);
+
+  // Partikel
+  sparks.forEach(p => {
+    ctx.save();
+    ctx.globalAlpha = p.life / 45;
+    ctx.fillStyle = p.col;
+    ctx.shadowColor = p.col; ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+
+  ctx.restore(); // Ende Welt-Transform
+
+  // ── Mini-Map ──────────────────────────────────────────
+  const MX = W - 115, MY = 10, MW = 105, MH = 80;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(MX, MY, MW, MH);
+  ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(MX, MY, MW, MH);
+
+  const sx = MW / WORLD_W, sy = MH / WORLD_H;
+  // Streckenlinie auf Mini-Map
+  ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  TRACK_PTS.forEach((p, i) => {
+    const mx = MX + p[0]*sx, my = MY + p[1]*sy;
+    i===0 ? ctx.moveTo(mx,my) : ctx.lineTo(mx,my);
+  });
+  ctx.closePath(); ctx.stroke();
+  // Spieler auf Mini-Map
+  ctx.fillStyle = '#2ecc40';
+  ctx.beginPath(); ctx.arc(MX + player.x*sx, MY + player.y*sy, 3, 0, Math.PI*2); ctx.fill();
+  // Gegner auf Mini-Map
+  enemies.forEach(e => {
+    ctx.fillStyle = e.color;
+    ctx.beginPath(); ctx.arc(MX + e.x*sx, MY + e.y*sy, 2.5, 0, Math.PI*2); ctx.fill();
+  });
+
+  // ── Start Screen ─────────────────────────────────────
+  if (state === 'start') {
+    ctx.fillStyle = '#000000bb';
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#ffd700';
+    ctx.font='bold 52px Arial Black';
+    ctx.fillText('🍄 LUIGI KART!', W/2, 180);
+    ctx.fillStyle='#aaffaa';
+    ctx.font='bold 18px Arial';
+    ctx.fillText('Lange Waldstrecke — 4 Runden!', W/2, 235);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 16px Arial';
+    ctx.fillText('↑ Gas  ← → Lenken', W/2, 285);
+    ctx.fillText('🔫 Pistole · ⚡ Strom · 🍌 Banane', W/2, 318);
+    ctx.fillText('Fragezeichen-Boxen einsammeln → Item', W/2, 350);
+    ctx.fillStyle='#aaffaa';
+    ctx.font='bold 22px Arial';
+    ctx.fillText('SPACE zum Starten!', W/2, 410);
+  }
+
+  // ── Game Over ─────────────────────────────────────────
+  if (state === 'gameover') {
+    ctx.fillStyle = '#000000cc';
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#e74c3c';
+    ctx.font='bold 52px Arial Black';
+    ctx.fillText('GAME OVER! 💥', W/2, 215);
+    ctx.fillStyle='#ffd700';
+    ctx.font='bold 26px Arial';
+    ctx.fillText(`Punkte: ${score}  •  Runden: ${laps}`, W/2, 280);
+    ctx.fillText(`K.O.s: ${kills}`, W/2, 318);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 20px Arial';
+    ctx.fillText('SPACE = Nochmal!', W/2, 380);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  GAME LOOP
+// ═══════════════════════════════════════════════════════════
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>

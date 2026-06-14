@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gassi Gehen! 🐕</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background: #87ceeb;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Arial Rounded MT Bold', 'Arial Black', sans-serif;
+      user-select: none;
+    }
+    #title {
+      font-size: 2.2rem;
+      color: #fff;
+      text-shadow: 3px 3px 0 #a05020, 0 0 20px rgba(255,200,0,0.5);
+      margin-bottom: 8px;
+      letter-spacing: 2px;
+    }
+    canvas {
+      border: 5px solid #a05020;
+      border-radius: 14px;
+      box-shadow: 0 8px 0 #7a3a10, 0 0 30px rgba(0,0,0,0.3);
+      display: block;
+    }
+    #controls {
+      color: #fff;
+      text-shadow: 1px 1px 0 #555;
+      margin-top: 8px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    #controls span { color: #ffe066; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div id="title">🐕 GASSI GEHEN! 🦴</div>
+  <canvas id="game" width="560" height="340"></canvas>
+  <div id="controls">
+    <span>← →</span> laufen &nbsp;·&nbsp; <span>↑</span> springen &nbsp;·&nbsp; <span>S</span> streicheln / buddeln 🐾&nbsp;·&nbsp; <span>❓</span> = verstecktes Leckerli!
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const GROUND = H - 70;
+
+// ── Audio ─────────────────────────────────────────────────────────
+const AC = new (window.AudioContext || window.webkitAudioContext)();
+function tone(freq, type, dur, vol=0.15, delay=0) {
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.connect(g); g.connect(AC.destination);
+  o.type=type; o.frequency.value=freq;
+  const t=AC.currentTime+delay;
+  g.gain.setValueAtTime(vol,t);
+  g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.start(t); o.stop(t+dur);
+}
+function boneSound()   { tone(800,'sine',0.08); tone(1100,'sine',0.08,0.1,0.08); }
+function jumpSound()   { tone(400,'sine',0.12); }
+function petSound()    { [500,600,700,900].forEach((f,i)=>tone(f,'sine',0.15,0.2,i*0.07)); }
+function woofSound()   { tone(220,'sawtooth',0.12,0.3); tone(180,'sawtooth',0.1,0.2,0.12); }
+function dieSound()    { tone(400,'square',0.15,0.3); tone(200,'square',0.3,0.3,0.15); }
+function poopSound()   { tone(150,'sawtooth',0.2,0.3); }
+function sniffSound()  { tone(300,'sine',0.06,0.08); tone(320,'sine',0.06,0.08,0.07); tone(280,'sine',0.06,0.08,0.14); }
+function digSound()    { [200,250,180,300].forEach((f,i)=>tone(f,'square',0.08,0.2,i*0.06)); }
+function findSound()   { [600,800,1000,1300].forEach((f,i)=>tone(f,'sine',0.2,0.25,i*0.09)); }
+
+// ── State ─────────────────────────────────────────────────────────
+let state='idle', score=0, highScore=0, frame=0, lastTime=0, speed=2.8;
+let happiness=100, happyTimer=0; // happiness bar
+let petCooldown=0, petAnim=0;
+
+// ── Player ────────────────────────────────────────────────────────
+const player = {
+  x:100, y:GROUND, vy:0, onGround:true,
+  walkFrame:0, walkTimer:0, facing:1,
+  leashPull: 0, // dog pulling tension
+};
+
+// ── Dog ───────────────────────────────────────────────────────────
+const dog = {
+  x:60, y:GROUND+8, vy:0, onGround:true,
+  walkFrame:0, walkTimer:0,
+  happy:0,        // happy bounce anim
+  woof: 0,        // woof bubble timer
+  sniffTarget: null, // hidden treat being sniffed
+  sniffAnim:  0,  // sniff animation counter
+  sniffTimer: 0,  // sniff sound cooldown
+  digAnim:    0,  // digging animation
+};
+
+// ── World objects ──────────────────────────────────────────────────
+let items        = []; // collectibles: bone, ball, treat
+let hazards      = []; // obstacles: poop, cat, puddle
+let hiddenTreats = []; // buried leckerlis to sniff out
+let clouds  = [{x:80,y:40,w:110,s:0.4},{x:260,y:70,w:80,s:0.3},{x:430,y:30,w:100,s:0.5}];
+let trees   = [{x:500,type:0},{x:340,type:1},{x:180,type:0}];
+let flowers = [];
+for(let i=0;i<10;i++) flowers.push({x:Math.random()*W,y:GROUND+8,c:['#ff6b6b','#ffd93d','#ff9ff3','#54a0ff'][Math.floor(Math.random()*4)]});
+
+let spawnTimer=0, happyDropTimer=0;
+
+// ── Keys ─────────────────────────────────────────────────────────
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['Space','ArrowUp','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  if(e.code==='KeyS') tryPetOrDig();
+  if(state!=='playing'&&(e.code==='Space'||e.code==='ArrowUp')) restart();
+});
+document.addEventListener('keyup',e=>keys[e.code]=false);
+
+// Touch
+let touchData={left:false,right:false,jump:false};
+canvas.addEventListener('click',()=>{ if(state!=='playing') restart(); });
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(state!=='playing'){restart();return;}
+  const tx=(e.touches[0].clientX-canvas.getBoundingClientRect().left)*(W/canvas.getBoundingClientRect().width);
+  if(tx<W/3)      touchData.left=true;
+  else if(tx<2*W/3) { tryPetOrDig(); }
+  else            touchData.right=true;
+  if(e.touches.length>1) touchData.jump=true;
+},{passive:false});
+canvas.addEventListener('touchend',e=>{
+  e.preventDefault();
+  touchData={left:false,right:false,jump:false};
+},{passive:false});
+
+// ── Restart ───────────────────────────────────────────────────────
+function restart(){
+  player.x=100; player.y=GROUND; player.vy=0; player.onGround=true; player.facing=1;
+  dog.x=60; dog.y=GROUND+8; dog.vy=0; dog.happy=0; dog.woof=0;
+  items=[]; hazards=[]; hiddenTreats=[]; score=0; frame=0; speed=2.8;
+  happiness=100; happyTimer=0; petCooldown=0; petAnim=0; spawnTimer=0;
+  dog.sniffTarget=null; dog.sniffAnim=0; dog.sniffTimer=0; dog.digAnim=0;
+  state='playing';
+}
+
+// ── Pet / Dig ────────────────────────────────────────────────────
+function tryPetOrDig(){
+  if(state!=='playing') return;
+  // Dig up a hidden treat if dog is sniffing one
+  if(dog.sniffTarget){
+    const ht=dog.sniffTarget;
+    dog.digAnim=0.8; dog.sniffTarget=null;
+    ht.dug=true;
+    score+=ht.pts;
+    happiness=Math.min(100,happiness+20);
+    dog.happy=1.5; dog.woof=2;
+    digSound();
+    setTimeout(()=>{ findSound(); woofSound(); },200);
+    spawnPop(ht.x,ht.y-20,'#ffe066',ht.e);
+    spawnPop(ht.x-14,ht.y-10,'#a05020','💨');
+    spawnPop(ht.x+14,ht.y-10,'#a05020','💨');
+    return;
+  }
+  // Otherwise pet the dog
+  if(petCooldown>0) return;
+  const dist=Math.abs(player.x-dog.x);
+  if(dist<80){
+    petCooldown=1.5; petAnim=0.8;
+    happiness=Math.min(100,happiness+25);
+    score+=5;
+    dog.happy=1.2; dog.woof=2;
+    petSound(); woofSound();
+  }
+}
+
+// ── Update ────────────────────────────────────────────────────────
+const GRAVITY=900, JUMP=-420, MOVE=180;
+
+function update(dt){
+  frame++;
+  for(const c of clouds){ c.x-=c.s; if(c.x<-150) c.x=W+150; }
+  for(const t of trees){ t.x-=speed; if(t.x<-80) t.x=W+80; }
+  for(const f of flowers){ f.x-=speed*0.5; if(f.x<-10) f.x=W+Math.random()*100; }
+
+  if(state!=='playing') return;
+
+  speed=2.8+score*0.006;
+  petCooldown=Math.max(0,petCooldown-dt);
+  petAnim=Math.max(0,petAnim-dt);
+  dog.happy=Math.max(0,dog.happy-dt);
+  dog.woof=Math.max(0,dog.woof-dt);
+  dog.sniffAnim=Math.max(0,dog.sniffAnim-dt);
+  dog.sniffTimer=Math.max(0,dog.sniffTimer-dt);
+  dog.digAnim=Math.max(0,dog.digAnim-dt);
+
+  // Happiness drains
+  happyDropTimer+=dt;
+  if(happyDropTimer>0.8){ happyDropTimer=0; happiness=Math.max(0,happiness-1); }
+  if(happiness<=0){ dieSound(); state='dead'; if(score>highScore) highScore=score; return; }
+
+  // ── Player movement
+  let mvx=0;
+  if(keys['ArrowLeft'] ||touchData.left)  mvx=-1;
+  if(keys['ArrowRight']||touchData.right) mvx= 1;
+  if(mvx!==0) player.facing=mvx;
+  player.x=Math.max(20,Math.min(W-20,player.x+mvx*MOVE*dt));
+
+  // Jump
+  if((keys['ArrowUp']||keys['Space']||touchData.jump)&&player.onGround){
+    player.vy=JUMP; player.onGround=false; jumpSound();
+  }
+  player.vy+=GRAVITY*dt;
+  player.y+=player.vy*dt;
+  if(player.y>=GROUND){ player.y=GROUND; player.vy=0; player.onGround=true; }
+
+  // Walk anim
+  if(mvx!==0||!player.onGround){ player.walkTimer+=dt; if(player.walkTimer>0.15){player.walkTimer=0;player.walkFrame=(player.walkFrame+1)%4;} }
+
+  // ── Dog follows player (on leash)
+  const targetX = player.x - player.facing*45;
+  const ddx = targetX - dog.x;
+  dog.x += ddx * Math.min(1, dt*4);
+  dog.x = Math.max(10, Math.min(W-10, dog.x));
+
+  // Dog walk anim
+  dog.walkTimer+=dt; if(dog.walkTimer>0.12){dog.walkTimer=0;dog.walkFrame=(dog.walkFrame+1)%4;}
+
+  // Dog bounce when happy
+  if(dog.happy>0) dog.y=GROUND+8+Math.sin(frame*0.4)*6;
+  else dog.y=GROUND+8;
+
+  // ── Hidden treats: move + sniff detection ──────────────────────
+  for(const ht of hiddenTreats) ht.x -= speed * 0.9;
+  hiddenTreats = hiddenTreats.filter(ht => ht.x > -60 && !ht.dug);
+
+  // Dog sniff detection
+  dog.sniffTarget = null;
+  for(const ht of hiddenTreats){
+    if(Math.abs(dog.x - ht.x) < 72){
+      dog.sniffTarget = ht;
+      dog.sniffAnim += dt * 3;
+      if(dog.sniffTimer <= 0){ sniffSound(); dog.sniffTimer = 0.55; }
+      break;
+    }
+  }
+
+  // ── Spawn items, hazards & hidden treats
+  spawnTimer-=dt;
+  if(spawnTimer<=0){
+    spawnTimer=1.0+Math.random()*1.2;
+    const r=Math.random();
+    if(r<0.30){
+      // Visible item
+      const types=[{e:'🦴',pts:10},{e:'🎾',pts:15},{e:'🍖',pts:20}];
+      const t=types[Math.floor(Math.random()*types.length)];
+      items.push({x:W+30,y:GROUND-20-Math.random()*30,e:t.e,pts:t.pts,rot:0});
+    } else if(r<0.50){
+      // Hidden treat (must be sniffed out!)
+      const treats=[{e:'🍪',pts:25},{e:'🥩',pts:35},{e:'🦴',pts:20},{e:'🧀',pts:30}];
+      const t=treats[Math.floor(Math.random()*treats.length)];
+      hiddenTreats.push({x:W+30,y:GROUND+4,e:t.e,pts:t.pts,dug:false});
+    } else if(r<0.75){
+      // Hazard on ground
+      const types=[{e:'💩',w:28,h:24},{e:'🌊',w:36,h:18}];
+      const t=types[Math.floor(Math.random()*types.length)];
+      hazards.push({x:W+30,y:GROUND+2,...t,type:'ground'});
+    } else {
+      // Cat!
+      hazards.push({x:W+30,y:GROUND-10,e:'🐱',w:32,h:36,type:'cat',vx:-speed*1.8,alive:true});
+    }
+  }
+
+  // Move items
+  for(const it of items){
+    it.x-=speed;
+    it.rot+=3*dt;
+    // Collect?
+    if(Math.abs(player.x-it.x)<28&&Math.abs(player.y-it.y)<35){
+      score+=it.pts; it.collected=true;
+      happiness=Math.min(100,happiness+8);
+      boneSound();
+      dog.happy=0.6;
+      spawnPop(it.x,it.y,'#ffe066',it.e);
+    }
+    if(Math.abs(dog.x-it.x)<24&&Math.abs(dog.y-it.y)<30&&!it.collected){
+      score+=it.pts*2; it.collected=true;
+      happiness=Math.min(100,happiness+15);
+      boneSound(); boneSound();
+      dog.happy=1; dog.woof=1.5;
+      spawnPop(it.x,it.y,'#ff69b4','⭐');
+    }
+  }
+  items=items.filter(it=>it.x>-40&&!it.collected);
+
+  // Move hazards
+  for(const h of hazards){
+    h.x-=speed*(h.type==='cat'?1.6:1);
+    // Collision with player
+    if(Math.abs(player.x-h.x)<20&&Math.abs(player.y-(h.y+h.h/2))<h.h/2+16){
+      if(h.type==='ground'&&player.onGround){
+        happiness=Math.max(0,happiness-20);
+        h.hit=true; poopSound();
+        spawnPop(h.x,h.y,'#964B00','💥');
+      } else if(h.type==='cat'&&h.alive){
+        happiness=Math.max(0,happiness-15);
+        h.alive=false; h.flying=true; h.vy=-200;
+        woofSound(); dog.woof=1.5;
+        spawnPop(h.x,h.y,'#ff4444','😱');
+      }
+    }
+    // Cat flying off
+    if(h.flying){ h.vy+=500*dt; h.y+=h.vy*dt; }
+  }
+  hazards=hazards.filter(h=>h.x>-60&&!h.hit&&h.y<H+50);
+
+  // Particles
+  for(const p of pops){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=200*dt; p.life-=dt*1.5; }
+  pops=pops.filter(p=>p.life>0);
+}
+
+// ── Particles ─────────────────────────────────────────────────────
+let pops=[];
+function spawnPop(x,y,color,emoji){
+  pops.push({x,y,vx:(Math.random()-0.5)*80,vy:-120-Math.random()*60,life:1,color,emoji});
+}
+
+// ── Draw ──────────────────────────────────────────────────────────
+function drawBG(){
+  // Sky
+  const sky=ctx.createLinearGradient(0,0,0,GROUND);
+  sky.addColorStop(0,'#5bc8f5'); sky.addColorStop(1,'#c8eaff');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,W,GROUND);
+
+  // Clouds
+  ctx.fillStyle='rgba(255,255,255,0.9)';
+  for(const c of clouds){
+    ctx.beginPath();
+    ctx.arc(c.x,c.y,c.w*0.38,0,Math.PI*2);
+    ctx.arc(c.x+c.w*0.28,c.y-c.w*0.13,c.w*0.28,0,Math.PI*2);
+    ctx.arc(c.x+c.w*0.52,c.y,c.w*0.32,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  // Trees
+  for(const t of trees){
+    // Trunk
+    ctx.fillStyle='#8B5E3C';
+    ctx.fillRect(t.x-8,GROUND-55,16,55);
+    // Leaves
+    ctx.fillStyle=t.type===0?'#2e8b57':'#3cb371';
+    ctx.beginPath(); ctx.arc(t.x,GROUND-70,32,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=t.type===0?'#3cb371':'#66bb6a';
+    ctx.beginPath(); ctx.arc(t.x,GROUND-82,24,0,Math.PI*2); ctx.fill();
+  }
+
+  // Ground
+  const gr=ctx.createLinearGradient(0,GROUND,0,H);
+  gr.addColorStop(0,'#7ec850'); gr.addColorStop(0.3,'#5a9e32'); gr.addColorStop(1,'#3d7022');
+  ctx.fillStyle=gr; ctx.fillRect(0,GROUND,W,H-GROUND);
+
+  // Path (dirt walkway)
+  ctx.fillStyle='#c8a870';
+  ctx.fillRect(0,GROUND+12,W,22);
+  // Dashes
+  ctx.fillStyle='rgba(255,255,200,0.3)';
+  const dash=((frame*speed*0.5)%60);
+  for(let x=-60+dash;x<W+60;x+=60) ctx.fillRect(x,GROUND+21,30,4);
+
+  // Flowers
+  for(const f of flowers){
+    ctx.font='14px serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
+    ctx.fillText(['🌼','🌸','🌺'][Math.floor(f.x)%3],f.x,f.y+2);
+  }
+}
+
+function drawPerson(x,y,facing,walkFrame){
+  ctx.save(); ctx.translate(x,y); if(facing<0) ctx.scale(-1,1);
+  const wf=walkFrame;
+  // Legs
+  const legSwing=[[-8,0],[0,-8],[8,0],[0,8]][wf]*0.4;
+  ctx.fillStyle='#3366cc';
+  ctx.fillRect(-10,0,8,26); // left leg
+  ctx.fillRect(2,0,8,26);   // right leg
+  // Shoes
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.roundRect(-12,22,12,8,4); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(2,22,12,8,4); ctx.fill();
+  // Body
+  ctx.fillStyle='#e74c3c';
+  ctx.beginPath(); ctx.roundRect(-14,-30,28,32,6); ctx.fill();
+  // Arms (swing with walk)
+  ctx.fillStyle='#e74c3c';
+  const armSwing=Math.sin(wf*1.57)*12;
+  ctx.fillRect(-18,-26,8,20+armSwing*0.3); // left arm
+  ctx.fillRect(10,-26,8,20-armSwing*0.3);  // right arm
+  // Head
+  ctx.fillStyle='#ffdab9';
+  ctx.beginPath(); ctx.arc(0,-44,16,0,Math.PI*2); ctx.fill();
+  // Hair
+  ctx.fillStyle='#5c3317';
+  ctx.beginPath(); ctx.arc(0,-52,12,Math.PI,0); ctx.fill();
+  // Eyes
+  ctx.fillStyle='#222';
+  ctx.beginPath(); ctx.arc(-5,-44,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(6,-44,3,0,Math.PI*2); ctx.fill();
+  // Smile
+  ctx.strokeStyle='#333'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(0,-40,6,0.2,Math.PI-0.2); ctx.stroke();
+  ctx.restore();
+}
+
+function drawDog(x,y,walkFrame,happy,facing){
+  ctx.save(); ctx.translate(x,y);
+  const fl=player.facing;
+  if(fl>0) ctx.scale(-1,1); // dog faces player
+
+  // Tail wag
+  const wagAngle=happy>0 ? Math.sin(frame*0.5)*0.6 : Math.sin(frame*0.15)*0.2;
+
+  // Body
+  ctx.fillStyle='#c8a060';
+  ctx.beginPath(); ctx.ellipse(0,0,22,14,0,0,Math.PI*2); ctx.fill();
+  // Outline
+  ctx.strokeStyle='#8b6030'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.ellipse(0,0,22,14,0,0,Math.PI*2); ctx.stroke();
+
+  // Tail
+  ctx.save(); ctx.translate(20,0); ctx.rotate(wagAngle-0.3);
+  ctx.fillStyle='#c8a060'; ctx.strokeStyle='#8b6030'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.ellipse(0,-8,5,12,0.3,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+
+  // Legs (walk animation)
+  const legY=Math.sin(walkFrame*1.57);
+  ctx.fillStyle='#a07040'; ctx.strokeStyle='#7a5020'; ctx.lineWidth=1.5;
+  [[-14,6],[-6,6],[6,6],[14,6]].forEach(([lx,by],i)=>{
+    const ly=by+(i%2===0?legY:-legY)*5;
+    ctx.beginPath(); ctx.roundRect(lx-4,by,7,13+ly,3); ctx.fill(); ctx.stroke();
+  });
+
+  // Head
+  ctx.fillStyle='#c8a060';
+  ctx.beginPath(); ctx.ellipse(-18,-4,16,13,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#8b6030'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.ellipse(-18,-4,16,13,0,0,Math.PI*2); ctx.stroke();
+
+  // Snout
+  ctx.fillStyle='#e8c080';
+  ctx.beginPath(); ctx.ellipse(-28,-2,9,7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.ellipse(-30,-1,4,3,0,0,Math.PI*2); ctx.fill();
+
+  // Eyes
+  ctx.fillStyle='#222';
+  ctx.beginPath(); ctx.arc(-14,-7,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(-13,-8,1.5,0,Math.PI*2); ctx.fill();
+
+  // Ears (floppy)
+  ctx.fillStyle='#a07040'; ctx.strokeStyle='#7a5020';
+  ctx.beginPath(); ctx.ellipse(-14,-14,7,10,-0.4,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(-22,-14,7,10,0.4,0,Math.PI*2); ctx.fill(); ctx.stroke();
+
+  // Happy hearts above head
+  if(happy>0){
+    ctx.globalAlpha=happy;
+    ctx.font='16px serif'; ctx.textAlign='center';
+    ctx.fillText('❤️',-18,-32+Math.sin(frame*0.4)*4);
+    ctx.globalAlpha=1;
+  }
+
+  // Woof bubble
+  if(dog.woof>0){
+    ctx.globalAlpha=Math.min(1,dog.woof);
+    ctx.fillStyle='#fff'; ctx.strokeStyle='#ccc'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.roundRect(-44,-50,52,28,8); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-30,-22); ctx.lineTo(-22,-22); ctx.lineTo(-26,-16); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#333'; ctx.font='bold 13px Arial';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('Wuff! 🐾',-18,-36);
+    ctx.globalAlpha=1;
+  }
+
+  ctx.restore();
+
+  // Leash
+  ctx.strokeStyle='#8b5e3c'; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath();
+  const lx1=dog.x+(player.facing>0?16:-16), ly1=dog.y-4;
+  const lx2=player.x+(player.facing>0?-10:10), ly2=player.y-18;
+  ctx.moveTo(lx1,ly1);
+  ctx.quadraticCurveTo((lx1+lx2)/2,Math.max(ly1,ly2)+16,lx2,ly2);
+  ctx.stroke();
+}
+
+function drawHazard(h){
+  ctx.font=`${h.w}px serif`; ctx.textAlign='center'; ctx.textBaseline='bottom';
+  ctx.fillText(h.e,h.x,h.y+h.h);
+}
+
+function drawItem(it){
+  ctx.save(); ctx.translate(it.x,it.y); ctx.rotate(it.rot);
+  ctx.font='26px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(it.e,0,0);
+  ctx.restore();
+  // Glow
+  ctx.save(); ctx.globalAlpha=0.3;
+  ctx.shadowColor='#ffe066'; ctx.shadowBlur=15;
+  ctx.font='26px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(it.e,it.x,it.y);
+  ctx.restore();
+}
+
+function drawHiddenTreat(ht){
+  const {x,y} = ht;
+  const isClose = dog.sniffTarget === ht;
+  // Dirt mound
+  ctx.fillStyle='#a07040';
+  ctx.beginPath(); ctx.ellipse(x,y+6,20,10,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#c8a060';
+  ctx.beginPath(); ctx.ellipse(x,y+2,16,8,0,0,Math.PI*2); ctx.fill();
+  // Question mark / paw hint
+  ctx.font='16px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(isClose ? '🐽' : '❓', x, y-4);
+  // Scent wafts when dog is sniffing
+  if(isClose){
+    const t=dog.sniffAnim;
+    for(let i=0;i<3;i++){
+      const off=i*0.8, age=(t+off)%2.4;
+      ctx.globalAlpha=Math.max(0,0.7-age*0.3);
+      ctx.font=`${10+age*4}px serif`;
+      ctx.fillText('〰️', x+(i-1)*14, y-10-age*14);
+    }
+    ctx.globalAlpha=1;
+    // "Hier! S drücken!" hint
+    ctx.fillStyle='#fff'; ctx.strokeStyle='#a05020'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.roundRect(x-38,y-52,76,22,8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#a05020'; ctx.font='bold 11px Arial Black'; ctx.textAlign='center';
+    ctx.fillText('S drücken! 🐾',x,y-38);
+  }
+}
+
+function drawSniffBubble(){
+  if(!dog.sniffTarget) return;
+  // Dog nose animation above head
+  const bx=dog.x, by=dog.y-28;
+  const pulse=0.85+Math.sin(dog.sniffAnim*6)*0.15;
+  ctx.save();
+  ctx.globalAlpha=0.9;
+  ctx.font=`${18*pulse}px serif`;
+  ctx.textAlign='center'; ctx.textBaseline='bottom';
+  ctx.fillText('🐽', bx-(player.facing>0?10:-10), by);
+  // Sniff dots
+  for(let i=0;i<3;i++){
+    const phase=(dog.sniffAnim*2+i*0.7)%2;
+    ctx.globalAlpha=Math.max(0,0.9-phase*0.45);
+    ctx.font=`${8+phase*4}px Arial`;
+    ctx.fillStyle='#8b6030';
+    ctx.fillText('·', bx-(player.facing>0?10:-10)+(i-1)*10, by-12-phase*10);
+  }
+  ctx.restore();
+  ctx.globalAlpha=1;
+}
+
+function drawHappiness(){
+  const bw=160, bh=18, bx=W/2-bw/2, by=8;
+  // Label
+  ctx.font='bold 12px Arial Black'; ctx.fillStyle='#fff';
+  ctx.textAlign='center'; ctx.strokeStyle='#333'; ctx.lineWidth=2;
+  ctx.strokeText('❤️ Hundeglück',W/2,by-2); ctx.fillText('❤️ Hundeglück',W/2,by-2);
+  // Bar bg
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,8); ctx.fill();
+  // Bar fill
+  const hpct=happiness/100;
+  const hcol=hpct>0.5?`hsl(${hpct*120},100%,45%)`:`hsl(${hpct*120},100%,45%)`;
+  ctx.fillStyle=hcol;
+  ctx.beginPath(); ctx.roundRect(bx,by,bw*hpct,bh,8); ctx.fill();
+  // Border
+  ctx.strokeStyle='#fff'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,8); ctx.stroke();
+  // Paw emoji inside
+  if(happiness>15){ ctx.font='12px serif'; ctx.textAlign='left'; ctx.fillText('🐾',bx+4,by+bh-3); }
+}
+
+function drawHUD(){
+  ctx.textAlign='left'; ctx.font='bold 20px Arial Black';
+  ctx.fillStyle='#fff'; ctx.strokeStyle='#555'; ctx.lineWidth=3;
+  ctx.strokeText(`🦴 ${score}`,10,30); ctx.fillText(`🦴 ${score}`,10,30);
+  ctx.textAlign='right'; ctx.fillStyle='#ffd700';
+  ctx.strokeText(`⭐ ${highScore}`,W-10,30); ctx.fillText(`⭐ ${highScore}`,W-10,30);
+  drawHappiness();
+
+  // Pet cooldown hint
+  if(petCooldown<=0&&state==='playing'){
+    ctx.textAlign='center'; ctx.font='bold 12px Arial';
+    ctx.fillStyle='rgba(255,255,255,0.7)';
+    ctx.fillText('S = Streicheln 🐾',W/2,H-8);
+  }
+  // Pet anim
+  if(petAnim>0){
+    ctx.globalAlpha=petAnim;
+    ctx.font='28px serif'; ctx.textAlign='center';
+    ctx.fillText('🐾❤️🐾',W/2-20,GROUND-60-petAnim*20);
+    ctx.globalAlpha=1;
+  }
+}
+
+function drawOverlay(title,sub){
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,W,H);
+  const pw=360,ph=180,px=(W-pw)/2,py=(H-ph)/2;
+  ctx.fillStyle='#fffde0';
+  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,20); ctx.fill();
+  ctx.strokeStyle='#a05020'; ctx.lineWidth=4;
+  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,20); ctx.stroke();
+  ctx.textAlign='center';
+  ctx.font='bold 36px Arial Black';
+  ctx.fillStyle='#e74c3c'; ctx.strokeStyle='#fff'; ctx.lineWidth=4;
+  ctx.strokeText(title,W/2,py+56); ctx.fillText(title,W/2,py+56);
+  ctx.font='bold 18px Arial';
+  ctx.fillStyle='#333'; ctx.lineWidth=2; ctx.strokeStyle='#fff';
+  ctx.strokeText(sub,W/2,py+100); ctx.fillText(sub,W/2,py+100);
+  ctx.font='16px Arial'; ctx.fillStyle='#a05020';
+  ctx.fillText('Tippen / Leertaste zum '+(state==='idle'?'Starten':'Nochmal'),W/2,py+150);
+}
+
+function draw(){
+  drawBG();
+  for(const ht of hiddenTreats) drawHiddenTreat(ht);
+  for(const h of hazards) drawHazard(h);
+  for(const it of items) drawItem(it);
+
+  // Draw dog (behind player)
+  drawSniffBubble();
+  drawDog(dog.x, dog.y, dog.walkFrame, dog.happy, player.facing);
+  // Draw player
+  drawPerson(player.x, player.y, player.facing, player.walkFrame);
+
+  // Particles
+  for(const p of pops){
+    ctx.globalAlpha=p.life;
+    ctx.font='22px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(p.emoji,p.x,p.y);
+  }
+  ctx.globalAlpha=1;
+
+  drawHUD();
+  if(state==='idle') drawOverlay('🐕 Gassi Gehen!','Sammle Knochen, weich Häufchen aus!');
+  if(state==='dead') drawOverlay('😢 Oh nein!',`${score} Knochen · Rekord: ${highScore}`);
+}
+
+// ── Loop ──────────────────────────────────────────────────────────
+function loop(ts){
+  const dt=Math.min((ts-lastTime)/1000,0.05); lastTime=ts;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

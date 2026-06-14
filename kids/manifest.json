@@ -1,8 +1,23 @@
 [
   {
+    "name": "amelie",
+    "title": "Gassi Gehen! 🐕",
+    "path": "kids/amelie/index.html"
+  },
+  {
     "name": "andri",
     "title": "Brawl Snake 🐍",
     "path": "kids/andri/index.html"
+  },
+  {
+    "name": "captain-furz",
+    "title": "Flappy Furz 💨",
+    "path": "kids/captain-furz/index.html"
+  },
+  {
+    "name": "constantin",
+    "title": "⚔️ Jedi Survival",
+    "path": "kids/constantin/index.html"
   },
   {
     "name": "daniel",
@@ -28,6 +43,11 @@
     "name": "florian",
     "title": "Florians Flucht 🚗💨",
     "path": "kids/florian/index.html"
+  },
+  {
+    "name": "henri",
+    "title": "Henri's Survival 🧟",
+    "path": "kids/henri/index.html"
   },
   {
     "name": "jochen",
@@ -60,6 +80,11 @@
     "path": "kids/klevis/index.html"
   },
   {
+    "name": "levi",
+    "title": "Levi's Achterbahn 🎢",
+    "path": "kids/levi/index.html"
+  },
+  {
     "name": "liam",
     "title": "Liam's Star Wars Quiz ⭐",
     "path": "kids/liam/index.html"
@@ -90,6 +115,11 @@
     "path": "kids/max/index.html"
   },
   {
+    "name": "max-2",
+    "title": "Hippie Ninja ✌️",
+    "path": "kids/max-2/index.html"
+  },
+  {
     "name": "noah",
     "title": "Noahs Yoshi Abenteuer 🦖",
     "path": "kids/noah/index.html"
@@ -103,6 +133,16 @@
     "name": "noah3",
     "title": "Noah3's Dackel-Rennen 🐕",
     "path": "kids/noah3/index.html"
+  },
+  {
+    "name": "noah4",
+    "title": "Noah's Minecraft ⛏️",
+    "path": "kids/noah4/index.html"
+  },
+  {
+    "name": "noah5",
+    "title": "🏎️ Auto Rennen!",
+    "path": "kids/noah5/index.html"
   },
   {
     "name": "noel",
@@ -133,6 +173,11 @@
     "name": "souna",
     "title": "Wizard Pong ⚡",
     "path": "kids/souna/index.html"
+  },
+  {
+    "name": "thorben",
+    "title": "🍄 Luigi Kart!",
+    "path": "kids/thorben/index.html"
   },
   {
     "name": "tim-test",
