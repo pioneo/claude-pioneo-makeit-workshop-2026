@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noah's Minecraft ⛏️</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:#1a1a2e;min-height:100vh;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-family:'Segoe UI',sans-serif;
+    color:#fff;gap:.3rem;padding:.3rem;user-select:none}
+  h1{font-size:clamp(.9rem,3vw,1.3rem);font-weight:900;
+    background:linear-gradient(135deg,#22c55e,#84cc16,#facc15);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  canvas{border-radius:6px;border:2px solid rgba(34,197,94,.3);
+    box-shadow:0 0 40px rgba(34,197,94,.15);display:block;cursor:crosshair}
+  .hint{font-size:.6rem;color:#1a2e1a;letter-spacing:.05em}
+</style>
+</head>
+<body>
+<h1>⛏️ Noah's Minecraft</h1>
+<canvas id="c"></canvas>
+<div class="hint">A/D oder ← → Bewegen &nbsp;·&nbsp; W / Leertaste Springen &nbsp;·&nbsp; Linksklick Abbauen &nbsp;·&nbsp; Rechtsklick Bauen &nbsp;·&nbsp; 1-9 Block wählen</div>
+<script>
+// ═══════════════════════════════════════════════════════
+//  NOAH'S MINECRAFT  —  2D Block World
+// ═══════════════════════════════════════════════════════
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+const W=700,H=460;
+cv.width=W;cv.height=H;
+
+// ── Block IDs ──────────────────────────────────────────
+const AIR=0,GRASS=1,DIRT=2,STONE=3,WOOD=4,LEAVES=5,SAND=6,
+      COAL=7,IRON=8,BEDROCK=9,PLANKS=10,GRAVEL=11,GLASS=12,GOLD=13;
+
+// ── World ──────────────────────────────────────────────
+const WW=180, WH=80;   // world tiles
+const TILE=32;
+let world=new Uint8Array(WW*WH);
+
+function wGet(x,y){if(x<0||x>=WW||y<0||y>=WH)return y<0?AIR:BEDROCK;return world[y*WW+x];}
+function wSet(x,y,v){if(x<0||x>=WW||y<0||y>=WH)return;world[y*WW+x]=v;}
+function solid(id){return id!==AIR&&id!==LEAVES&&id!==GLASS;}
+
+// ── World generation ───────────────────────────────────
+function generate(){
+  const heights=[];
+  for(let x=0;x<WW;x++){
+    let h=38+Math.round(
+      Math.sin(x*0.08)*4+Math.sin(x*0.03)*7+
+      Math.sin(x*0.15)*2+Math.sin(x*0.22)*1.5
+    );
+    heights[x]=Math.max(20,Math.min(55,h));
+  }
+  // Smooth
+  for(let i=0;i<3;i++)for(let x=1;x<WW-1;x++)
+    heights[x]=Math.round((heights[x-1]+heights[x]+heights[x+1])/3);
+
+  for(let x=0;x<WW;x++){
+    const h=heights[x];
+    for(let y=0;y<WH;y++){
+      if(y===WH-1)            wSet(x,y,BEDROCK);
+      else if(y>h+4)          wSet(x,y,STONE);
+      else if(y===h)          wSet(x,y, x>WW/2-10&&x<WW/2+10?SAND:GRASS);
+      else if(y>h&&y<=h+4)    wSet(x,y,DIRT);
+      // else AIR
+    }
+  }
+
+  // Sand desert strip
+  for(let x=WW/2-12;x<WW/2+12;x++){
+    const h=heights[x];
+    for(let y=h;y<=h+6;y++)wSet(x,y,SAND);
+  }
+
+  // Ores
+  const scatter=(id,count,minY,maxY)=>{
+    for(let i=0;i<count;i++){
+      const x=1+Math.floor(Math.random()*(WW-2));
+      const y=minY+Math.floor(Math.random()*(maxY-minY));
+      if(wGet(x,y)===STONE){wSet(x,y,id);
+        if(Math.random()<.5&&wGet(x+1,y)===STONE)wSet(x+1,y,id);
+        if(Math.random()<.4&&wGet(x,y+1)===STONE)wSet(x,y+1,id);}
+    }
+  };
+  scatter(COAL,180,40,WH-5);
+  scatter(IRON,90,48,WH-5);
+  scatter(GOLD,40,58,WH-3);
+  scatter(GRAVEL,60,35,WH-2);
+
+  // Trees
+  for(let x=4;x<WW-4;x+=5+Math.floor(Math.random()*8)){
+    const h=heights[x];
+    if(wGet(x,h)!==GRASS)continue;
+    const th=4+Math.floor(Math.random()*3);
+    for(let ty=h-th;ty<h;ty++)wSet(x,ty,WOOD);
+    for(let ly=h-th-2;ly<=h-th+1;ly++)
+      for(let lx=x-2;lx<=x+2;lx++)
+        if(wGet(lx,ly)===AIR&&Math.random()>.15)wSet(lx,ly,LEAVES);
+  }
+
+  // Cave openings (small horizontal passages)
+  for(let i=0;i<30;i++){
+    const cx=Math.floor(Math.random()*WW);
+    const cy=42+Math.floor(Math.random()*25);
+    const len=4+Math.floor(Math.random()*12);
+    for(let j=0;j<len;j++){wSet(cx+j,cy,AIR);wSet(cx+j,cy+1,AIR);}
+  }
+}
+generate();
+
+// ── Player ─────────────────────────────────────────────
+const PW=20, PH=42;  // player pixel size
+let px=WW/2*TILE, py=0;   // pixel position (top-left)
+let pvx=0, pvy=0, onGround=false;
+let facing=1;
+const GRAVITY=0.55, JUMP=-12.5, PSPEED=3.5;
+
+// Find spawn y
+function spawnPlayer(){
+  const sx=Math.floor(WW/2);
+  for(let y=0;y<WH;y++)if(!solid(wGet(sx,y))&&!solid(wGet(sx,y-1))&&solid(wGet(sx,y+1))){
+    px=(sx+.5)*TILE-PW/2; py=y*TILE-PH; break;
+  }
+}
+spawnPlayer();
+
+// ── Camera ─────────────────────────────────────────────
+let camX=px+PW/2-W/2, camY=py+PH/2-H/2;
+
+// ── Input ──────────────────────────────────────────────
+const K={};
+document.addEventListener('keydown',e=>{K[e.code]=true;
+  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  if(e.code.startsWith('Digit')){const n=parseInt(e.code.slice(5));if(n>=1&&n<=9)hotbar.sel=n-1;}
+});
+document.addEventListener('keyup',e=>K[e.code]=false);
+let mouseX=0,mouseY=0,lmbDown=false,rmbDown=false;
+cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();mouseX=(e.clientX-r.left)*(W/r.width);mouseY=(e.clientY-r.top)*(H/r.height);});
+cv.addEventListener('mousedown',e=>{e.preventDefault();if(e.button===0)lmbDown=true;if(e.button===2)rmbDown=true;});
+cv.addEventListener('mouseup',e=>{if(e.button===0){lmbDown=false;mine.active=false;}if(e.button===2)rmbDown=false;});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('wheel',e=>{hotbar.sel=(hotbar.sel+(e.deltaY>0?1:-1)+9)%9;});
+
+// ── Hotbar / Inventory ─────────────────────────────────
+const hotbar={
+  sel:0,
+  slots:[
+    {id:DIRT,  n:64},{id:STONE,n:64},{id:WOOD,  n:64},
+    {id:PLANKS,n:64},{id:SAND, n:64},{id:GLASS, n:32},
+    {id:0,n:0},{id:0,n:0},{id:0,n:0}
+  ]
+};
+
+function addToInventory(id){
+  for(let s of hotbar.slots)if(s.id===id&&s.n<999){s.n++;return;}
+  for(let s of hotbar.slots)if(s.id===0){s.id=id;s.n=1;return;}
+}
+
+// ── Mining ─────────────────────────────────────────────
+const HARDNESS={[DIRT]:.8,[GRASS]:.8,[SAND]:.8,[GRAVEL]:.8,[LEAVES]:.3,
+  [WOOD]:2,[PLANKS]:1.5,[STONE]:3,[COAL]:3,[IRON]:4,[GOLD]:4,[BEDROCK]:999,[GLASS]:.6};
+let mine={active:false,tx:0,ty:0,prog:0};
+
+// ── Physics & collision ────────────────────────────────
+function moveAndCollide(){
+  // Horizontal
+  px+=pvx;
+  const lx=Math.floor(px/TILE), rx=Math.floor((px+PW-1)/TILE);
+  const ty1=Math.floor(py/TILE), ty2=Math.floor((py+PH-1)/TILE);
+  if(pvx>0){
+    for(let ty=ty1;ty<=ty2;ty++)if(solid(wGet(rx,ty))){px=rx*TILE-PW;pvx=0;break;}
+  } else if(pvx<0){
+    for(let ty=ty1;ty<=ty2;ty++)if(solid(wGet(lx,ty))){px=(lx+1)*TILE;pvx=0;break;}
+  }
+  px=Math.max(0,Math.min(WW*TILE-PW,px));
+
+  // Vertical
+  py+=pvy;
+  const lx2=Math.floor(px/TILE), rx2=Math.floor((px+PW-1)/TILE);
+  const yt=Math.floor(py/TILE), yb=Math.floor((py+PH-1)/TILE);
+  onGround=false;
+  if(pvy>0){
+    for(let tx=lx2;tx<=rx2;tx++)if(solid(wGet(tx,yb))){py=yb*TILE-PH;pvy=0;onGround=true;break;}
+  } else if(pvy<0){
+    for(let tx=lx2;tx<=rx2;tx++)if(solid(wGet(tx,yt))){py=(yt+1)*TILE;pvy=0;break;}
+  }
+  py=Math.max(0,Math.min(WH*TILE-PH,py));
+}
+
+// ── Update ─────────────────────────────────────────────
+let placeCD=0;
+function update(){
+  // Movement
+  if(K['ArrowLeft']||K['KeyA']){pvx=-PSPEED;facing=-1;}
+  else if(K['ArrowRight']||K['KeyD']){pvx=PSPEED;facing=1;}
+  else pvx*=onGround?.6:.92;
+
+  if((K['Space']||K['ArrowUp']||K['KeyW'])&&onGround){pvy=JUMP;onGround=false;}
+  pvy+=GRAVITY;
+  pvy=Math.max(-18,Math.min(18,pvy));
+  moveAndCollide();
+
+  // Camera smooth follow
+  camX+=(px+PW/2-W/2-camX)*.12;
+  camY+=(py+PH/2-H/2+20-camY)*.12;
+  camX=Math.max(0,Math.min(WW*TILE-W,camX));
+  camY=Math.max(0,Math.min(WH*TILE-H,camY));
+
+  // Target tile under mouse
+  const wx=Math.floor((mouseX+camX)/TILE);
+  const wy=Math.floor((mouseY+camY)/TILE);
+  const pcx=px+PW/2, pcy=py+PH/2;
+  const reach=4.5*TILE;
+  const inReach=Math.hypot(wx*TILE+TILE/2-pcx,wy*TILE+TILE/2-pcy)<reach;
+
+  // Mining (left click)
+  if(lmbDown&&inReach){
+    const bid=wGet(wx,wy);
+    if(bid!==AIR&&bid!==BEDROCK){
+      if(!mine.active||mine.tx!==wx||mine.ty!==wy){mine={active:true,tx:wx,ty:wy,prog:0};}
+      const hard=HARDNESS[bid]||1;
+      mine.prog+=1/(hard*60);
+      if(mine.prog>=1){
+        addToInventory(bid);
+        wSet(wx,wy,AIR);
+        mine.active=false;
+      }
+    } else {mine.active=false;}
+  } else {mine.active=false;}
+
+  // Placing (right click)
+  if(placeCD>0)placeCD--;
+  if(rmbDown&&placeCD===0&&inReach){
+    const slot=hotbar.slots[hotbar.sel];
+    if(slot.id!==0&&slot.n>0&&wGet(wx,wy)===AIR){
+      // Don't place inside player
+      const bLeft=wx*TILE,bRight=(wx+1)*TILE,bTop=wy*TILE,bBot=(wy+1)*TILE;
+      const overlap=px<bRight&&px+PW>bLeft&&py<bBot&&py+PH>bTop;
+      if(!overlap){wSet(wx,wy,slot.id);slot.n--;if(slot.n<=0)slot.id=0;placeCD=8;}
+    }
+  }
+}
+
+// ── Draw block ─────────────────────────────────────────
+const BCOL={
+  [GRASS]:'#5d8a3c',[DIRT]:'#7a5430',[STONE]:'#808080',
+  [WOOD]:'#5c3d1e',[LEAVES]:'#3d7c20',[SAND]:'#e4c35a',
+  [COAL]:'#717171',[IRON]:'#909090',[BEDROCK]:'#333',
+  [PLANKS]:'#a07050',[GRAVEL]:'#8a9090',[GLASS]:'#aaddff',
+  [GOLD]:'#909090',
+};
+
+function drawBlock(id,sx,sy,s=TILE){
+  const col=BCOL[id];if(!col)return;
+  // Base fill
+  if(id===LEAVES){ctx.globalAlpha=.88;}
+  ctx.fillStyle=col;ctx.fillRect(sx,sy,s,s);
+  ctx.globalAlpha=1;
+
+  // Details
+  const h=s/TILE; // scale factor
+  if(id===GRASS){
+    ctx.fillStyle='#7a5430';ctx.fillRect(sx,sy+s*.18,s,s*.82);
+    ctx.fillStyle='#5d8a3c';ctx.fillRect(sx,sy,s,s*.18);
+    ctx.fillStyle='#4a7030';ctx.fillRect(sx,sy+s*.18,s,2*h);
+  }
+  if(id===DIRT){
+    ctx.fillStyle='#6b4820';
+    [[.2,.2],[.65,.45],[.35,.7],[.8,.15],[.1,.6]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,2*h,2*h));
+  }
+  if(id===STONE){
+    ctx.fillStyle='#909090';
+    [[.1,.1],[.5,.3],[.2,.6],[.7,.7],[.4,.15],[.8,.5]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,4*h,2*h));
+    ctx.fillStyle='#6f6f6f';ctx.fillRect(sx+s*.3,sy+s*.4,s*.5,2*h);
+  }
+  if(id===WOOD){
+    ctx.fillStyle='#7c5433';
+    ctx.fillRect(sx+s*.1,sy,s*.12,s);ctx.fillRect(sx+s*.7,sy,s*.12,s);
+    ctx.fillStyle='#3d2810';ctx.fillRect(sx+s*.22,sy,2*h,s);ctx.fillRect(sx+s*.62,sy,2*h,s);
+    // Wood rings top/bottom
+    ctx.fillStyle='#4a2d10';ctx.fillRect(sx,sy,s,3*h);ctx.fillRect(sx,sy+s-3*h,s,3*h);
+  }
+  if(id===LEAVES){
+    ctx.fillStyle='#2d6e15';
+    [[.1,.2],[.6,.1],[.3,.6],[.75,.5],[.2,.8],[.5,.3]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,3*h,3*h));
+  }
+  if(id===SAND){
+    ctx.fillStyle='#cfa83a';
+    [[.15,.15],[.55,.4],[.3,.7],[.7,.2],[.8,.65]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,2*h,2*h));
+  }
+  if(id===COAL){
+    ctx.fillStyle='#222';
+    [[.2,.25],[.55,.15],[.3,.6],[.7,.55],[.45,.35]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,4*h,4*h));
+  }
+  if(id===IRON){
+    ctx.fillStyle='#c87040';
+    [[.2,.2],[.6,.15],[.35,.6],[.7,.5],[.15,.7]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,4*h,4*h));
+  }
+  if(id===GOLD){
+    ctx.fillStyle='#909090';ctx.fillRect(sx,sy,s,s);
+    ctx.fillStyle='#fbbf24';
+    [[.2,.2],[.6,.15],[.35,.6],[.7,.5],[.15,.7],[.5,.35]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,4*h,4*h));
+  }
+  if(id===PLANKS){
+    ctx.fillStyle='#886040';
+    ctx.fillRect(sx,sy+s*.3,s,2*h);ctx.fillRect(sx,sy+s*.65,s,2*h);
+    [[0,.3],[.5,0],[0,.67],[.5,.35]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,2*h,s*.3));
+  }
+  if(id===GRAVEL){
+    ctx.fillStyle='#7a8585';
+    [[.1,.15],[.55,.1],[.25,.55],[.7,.45],[.4,.75],[.8,.2]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,5*h,4*h));
+  }
+  if(id===GLASS){
+    ctx.fillStyle='rgba(200,235,255,.35)';ctx.fillRect(sx+2,sy+2,s-4,s-4);
+    ctx.strokeStyle='rgba(180,220,255,.6)';ctx.lineWidth=1;
+    ctx.strokeRect(sx+3,sy+3,s-6,s-6);
+  }
+  if(id===BEDROCK){
+    ctx.fillStyle='#222';
+    [[.1,.1],[.5,.05],[.3,.5],[.7,.4],[.15,.8],[.6,.7],[.45,.25]].forEach(([a,b])=>ctx.fillRect(sx+a*s,sy+b*s,5*h,4*h));
+  }
+
+  // Edge shading (gives Minecraft block depth)
+  ctx.fillStyle='rgba(255,255,255,.12)';ctx.fillRect(sx,sy,s,1.5);ctx.fillRect(sx,sy,1.5,s);
+  ctx.fillStyle='rgba(0,0,0,.22)';ctx.fillRect(sx,sy+s-1.5,s,1.5);ctx.fillRect(sx+s-1.5,sy,1.5,s);
+}
+
+// ── Draw player (Steve) ────────────────────────────────
+function drawPlayer(){
+  const sx=px-camX, sy=py-camY;
+  const f=facing;
+
+  // Shadow
+  ctx.fillStyle='rgba(0,0,0,.3)';ctx.beginPath();ctx.ellipse(sx+PW/2,sy+PH+1,12,4,0,0,Math.PI*2);ctx.fill();
+
+  // Legs (walking animation)
+  const legAng=Math.sin(Date.now()*.01)*0.3*(Math.abs(pvx)>.5?1:0);
+  ctx.fillStyle='#3b82f6';
+  // Left leg
+  ctx.save();ctx.translate(sx+PW/2-4,sy+PH*.6);ctx.rotate(legAng);
+  ctx.fillRect(-4,0,8,PH*.4);ctx.restore();
+  // Right leg
+  ctx.save();ctx.translate(sx+PW/2+4,sy+PH*.6);ctx.rotate(-legAng);
+  ctx.fillRect(-4,0,8,PH*.4);ctx.restore();
+
+  // Body
+  ctx.fillStyle='#16a34a';ctx.fillRect(sx+2,sy+PH*.3,PW-4,PH*.35);
+  // Belt
+  ctx.fillStyle='#7c5430';ctx.fillRect(sx+2,sy+PH*.6,PW-4,3);
+
+  // Arms
+  const armAng=Math.sin(Date.now()*.01)*0.3*(Math.abs(pvx)>.5?1:0);
+  ctx.fillStyle='#16a34a';
+  ctx.save();ctx.translate(sx+(f===1?PW-2:2),sy+PH*.32);ctx.rotate(f===1?armAng:-armAng);
+  ctx.fillRect(f===1?0:-6,0,6,PH*.32);ctx.restore();
+  ctx.save();ctx.translate(sx+(f===1?2:PW-2),sy+PH*.32);ctx.rotate(f===1?-armAng:armAng);
+  ctx.fillRect(f===1?-6:0,0,6,PH*.32);ctx.restore();
+
+  // Head
+  ctx.fillStyle='#f4c089';ctx.fillRect(sx+2,sy,PW-4,PH*.32);
+  // Hair
+  ctx.fillStyle='#5c3d1e';ctx.fillRect(sx+2,sy,PW-4,5);
+  // Eyes
+  ctx.fillStyle='#fff';
+  const eyeX=f===1?sx+PW-10:sx+6;
+  ctx.fillRect(eyeX,sy+7,6,5);
+  ctx.fillStyle='#222';ctx.fillRect(eyeX+(f===1?2:2),sy+8,3,3);
+  // Mouth
+  ctx.fillStyle='#c0764a';ctx.fillRect(sx+PW/2-4,sy+PH*.28,6,2);
+}
+
+// ── Draw sky & background ──────────────────────────────
+function drawSky(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1e90ff');g.addColorStop(.7,'#87ceeb');g.addColorStop(1,'#b8e4f9');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // Sun
+  ctx.fillStyle='#ffe566';ctx.shadowColor='#ffd700';ctx.shadowBlur=20;
+  ctx.beginPath();ctx.arc(W-80,60,28,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+  // Clouds
+  [[100,40],[280,65],[500,35],[620,75]].forEach(([cx,cy])=>{
+    ctx.fillStyle='rgba(255,255,255,.85)';
+    ctx.beginPath();ctx.ellipse(cx-camX*.05%W,cy,45,20,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(cx-camX*.05%W+30,cy-8,35,16,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(cx-camX*.05%W-20,cy-5,28,14,0,0,Math.PI*2);ctx.fill();
+  });
+}
+
+// ── Draw world tiles ───────────────────────────────────
+function drawWorld(){
+  const startX=Math.floor(camX/TILE), endX=Math.ceil((camX+W)/TILE)+1;
+  const startY=Math.floor(camY/TILE), endY=Math.ceil((camY+H)/TILE)+1;
+  for(let ty=startY;ty<endY;ty++)for(let tx=startX;tx<endX;tx++){
+    const id=wGet(tx,ty);if(!id)continue;
+    const sx=tx*TILE-camX, sy=ty*TILE-camY;
+    drawBlock(id,sx,sy);
+  }
+}
+
+// ── Draw mining progress ───────────────────────────────
+function drawMine(){
+  if(!mine.active||mine.prog<=0)return;
+  const sx=mine.tx*TILE-camX, sy=mine.ty*TILE-camY;
+  // Crack overlay
+  const n=Math.floor(mine.prog*5)+1;
+  ctx.fillStyle=`rgba(0,0,0,${mine.prog*.6})`;ctx.fillRect(sx,sy,TILE,TILE);
+  // Crack lines
+  ctx.strokeStyle=`rgba(0,0,0,${.4+mine.prog*.4})`;ctx.lineWidth=1;
+  for(let i=0;i<n;i++){
+    const a=(i/n)*Math.PI*2;
+    ctx.beginPath();ctx.moveTo(sx+TILE/2,sy+TILE/2);
+    ctx.lineTo(sx+TILE/2+Math.cos(a)*TILE*.4,sy+TILE/2+Math.sin(a)*TILE*.4);
+    ctx.stroke();
+  }
+  // Progress bar below
+  ctx.fillStyle='rgba(0,0,0,.7)';ctx.fillRect(sx,sy+TILE+2,TILE,6);
+  ctx.fillStyle='#facc15';ctx.fillRect(sx,sy+TILE+2,TILE*mine.prog,6);
+}
+
+// ── Draw target highlight ──────────────────────────────
+function drawTarget(){
+  const wx=Math.floor((mouseX+camX)/TILE);
+  const wy=Math.floor((mouseY+camY)/TILE);
+  const pcx=px+PW/2, pcy=py+PH/2;
+  const d=Math.hypot(wx*TILE+TILE/2-pcx,wy*TILE+TILE/2-pcy);
+  if(d>4.5*TILE)return;
+  const sx=wx*TILE-camX, sy=wy*TILE-camY;
+  ctx.strokeStyle='rgba(255,255,255,.5)';ctx.lineWidth=2;
+  ctx.strokeRect(sx+1,sy+1,TILE-2,TILE-2);
+  ctx.fillStyle='rgba(255,255,255,.08)';ctx.fillRect(sx+1,sy+1,TILE-2,TILE-2);
+}
+
+// ── Draw hotbar ────────────────────────────────────────
+const HB_S=44, HB_N=9, HB_GAP=4;
+const HB_W=HB_N*(HB_S+HB_GAP)-HB_GAP;
+const HB_X=(W-HB_W)/2, HB_Y=H-HB_S-8;
+
+function drawHotbar(){
+  // Background panel
+  ctx.fillStyle='rgba(0,0,0,.65)';ctx.beginPath();ctx.roundRect(HB_X-6,HB_Y-6,HB_W+12,HB_S+12,8);ctx.fill();
+
+  hotbar.slots.forEach((sl,i)=>{
+    const sx=HB_X+i*(HB_S+HB_GAP), sy=HB_Y;
+    const sel=i===hotbar.sel;
+    // Slot bg
+    ctx.fillStyle=sel?'rgba(255,255,255,.22)':'rgba(100,100,100,.4)';
+    ctx.beginPath();ctx.roundRect(sx,sy,HB_S,HB_S,4);ctx.fill();
+    ctx.strokeStyle=sel?'#fff':'rgba(255,255,255,.3)';ctx.lineWidth=sel?2:1;
+    ctx.beginPath();ctx.roundRect(sx,sy,HB_S,HB_S,4);ctx.stroke();
+    // Block icon
+    if(sl.id!==0){
+      const bs=28;
+      drawBlock(sl.id,sx+(HB_S-bs)/2,sy+(HB_S-bs)/2,bs);
+      // Count
+      if(sl.n>0){
+        ctx.fillStyle='#fff';ctx.font='bold 10px Segoe UI';ctx.textAlign='right';
+        ctx.fillText(sl.n,sx+HB_S-3,sy+HB_S-3);
+      }
+    }
+    // Slot number
+    ctx.fillStyle='rgba(255,255,255,.5)';ctx.font='9px Segoe UI';ctx.textAlign='left';
+    ctx.fillText(i+1,sx+3,sy+10);
+  });
+  ctx.textAlign='left';
+}
+
+// ── Draw HUD (coordinates, block name) ────────────────
+const BNAME={[DIRT]:'Erde',[GRASS]:'Grasblock',[STONE]:'Stein',[WOOD]:'Holz',
+  [LEAVES]:'Blätter',[SAND]:'Sand',[COAL]:'Kohle',[IRON]:'Eisenerz',
+  [BEDROCK]:'Grundgestein',[PLANKS]:'Holzplanken',[GRAVEL]:'Kies',
+  [GLASS]:'Glas',[GOLD]:'Golderz'};
+
+function drawHUD(){
+  const tx=Math.floor(px/TILE), ty=Math.floor(py/TILE);
+  ctx.fillStyle='rgba(0,0,0,.55)';ctx.beginPath();ctx.roundRect(6,6,160,36,6);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Segoe UI';ctx.textAlign='left';
+  ctx.fillText(`⛏️ ${CHILD}`,12,22);
+  ctx.fillStyle='#94a3b8';ctx.font='10px Segoe UI';
+  ctx.fillText(`X: ${tx}  Y: ${ty}`,12,36);
+
+  // Selected block name
+  const sel=hotbar.slots[hotbar.sel];
+  if(sel.id){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.beginPath();ctx.roundRect(W-140,6,134,28,6);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 11px Segoe UI';ctx.textAlign='right';
+    ctx.fillText(BNAME[sel.id]||'Block',W-12,24);
+  }
+  ctx.textAlign='left';
+}
+
+// ── Underground darkness ───────────────────────────────
+function drawDark(){
+  const groundLine=WH*.5*TILE-camY;  // rough surface Y on screen
+  if(groundLine>0&&groundLine<H){
+    const g=ctx.createLinearGradient(0,groundLine-80,0,groundLine+40);
+    g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.55)');
+    ctx.fillStyle=g;ctx.fillRect(0,groundLine-80,W,120);
+  }
+  if(groundLine<H){
+    const darkY=Math.max(0,groundLine);
+    ctx.fillStyle='rgba(0,0,0,.55)';
+    ctx.fillRect(0,darkY,W,H-darkY);
+  }
+}
+
+// ── Render loop ────────────────────────────────────────
+const CHILD='Noah';
+function loop(){
+  requestAnimationFrame(loop);
+  update();
+
+  // Sky (only if camera shows sky area)
+  const skyBase=WH*.45*TILE-camY;
+  if(skyBase>0)drawSky();
+  else{ctx.fillStyle='#0f172a';ctx.fillRect(0,0,W,H);}
+
+  drawWorld();
+  drawDark();
+  drawTarget();
+  drawMine();
+  drawPlayer();
+  drawHotbar();
+  drawHUD();
+}
+loop();
+</script>
+</body>
+</html>
